@@ -1,0 +1,27 @@
+# Build directories
+build/
+cmake-build-*/
+
+# Compiled objects and executables
+*.o
+*.a
+*.so
+*.dll
+*.exe
+
+# Logs
+*.log
+server.key
+server.crt
+client.key
+client.crt
+
+# IDE files
+.idea/
+.vs/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
