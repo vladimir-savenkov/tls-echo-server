@@ -25,3 +25,9 @@ client.crt
 # OS files
 .DS_Store
 Thumbs.db
+
+# Secrets
+*.key
+*.pem
+*.rsa
+!*.pub
