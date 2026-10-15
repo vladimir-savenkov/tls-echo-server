@@ -2,6 +2,7 @@
 #include "protocol.h"
 #include <iostream>
 #include <algorithm>
+#include <utility>
 
 // ============================================================================
 // TlsServer Implementation
@@ -11,7 +12,8 @@ TlsServer::TlsServer(boost::asio::io_context& io_context,
                     boost::asio::ssl::context& ssl_context,
                     unsigned short port,
                     std::shared_ptr<spdlog::logger> logger)
-    : acceptor_(io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)),
+    : io_context_(io_context),
+      acceptor_(io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)),
       ssl_context_(ssl_context),
       logger_(logger) {
 
@@ -28,14 +30,15 @@ TlsServer::~TlsServer() {
 
 void TlsServer::run() {
     logger_->info("Event loop started");
-    acceptor_.get_executor().context().run();
+    io_context_.run();
 }
 
 void TlsServer::do_accept() {
     acceptor_.async_accept([this](boost::system::error_code ec,
                                   boost::asio::ip::tcp::socket socket) {
         if (!ec) {
-            boost::asio::ssl::stream<boost::asio::ip::tcp::socket> ssl_socket(socket, ssl_context_);
+            boost::asio::ssl::stream<boost::asio::ip::tcp::socket> ssl_socket(
+                std::move(socket), ssl_context_);
 
             auto session = std::make_shared<Session>(std::move(ssl_socket), logger_);
             session->start();

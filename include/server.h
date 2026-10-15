@@ -21,6 +21,7 @@ public:
     void run();
 
 private:
+    boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ssl::context& ssl_context_;
     std::shared_ptr<spdlog::logger> logger_; // Логгер
@@ -49,4 +50,3 @@ private:
         uint32_t expected_crc_ = 0;
     };
 };
-
