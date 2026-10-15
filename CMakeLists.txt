@@ -65,3 +65,13 @@ target_link_libraries(test_client_integration PRIVATE
     Threads::Threads
 )
 add_test(NAME client_integration_tests COMMAND test_client_integration)
+set_tests_properties(client_integration_tests PROPERTIES TIMEOUT 30)
+
+install(TARGETS server client RUNTIME DESTINATION bin)
+install(PROGRAMS
+    scripts/interactive_client.py
+    scripts/multi_client_test.py
+    scripts/generate-certs.sh
+    DESTINATION bin
+)
+install(FILES README.md LICENSE DESTINATION share/tls-echo-server)
