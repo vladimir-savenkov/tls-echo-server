@@ -38,13 +38,15 @@ public:
     std::vector<char> serialize() const;
 
     // Десериализация из сырых данных
-    static Packet deserialize(const char* raw_header, const std::string& payload);
+    static Packet deserialize(const char* raw_header, std::size_t header_size,
+                              const std::string& payload);
 
     // Проверка контрольной суммы
     bool verify_crc() const;
 
     // Геттеры
     uint32_t id() const { return id_; }
+    uint16_t length() const { return static_cast<uint16_t>(payload_.size()); }
     const std::string& payload() const { return payload_; }
     uint32_t crc() const { return crc_; }
 
@@ -60,4 +62,3 @@ private:
 // 3. Отдельная функция для расчета CRC (если нужна снаружи)
 // ============================================================================
 uint32_t calculate_crc32(const char* data, std::size_t size);
-

@@ -9,8 +9,10 @@
 #include <thread>
 #include <chrono>
 #include "server.h"
+#include "spdlog/async.h"
 #include "spdlog/spdlog.h"
-#include "spdlog/async_logger.h"
+#include "spdlog/sinks/basic_file_sink.h"
+#include "spdlog/sinks/stdout_color_sinks.h"
 
 namespace po = boost::program_options;
 
@@ -43,9 +45,11 @@ int main(int argc, char* argv[]) {
         std::string log_file = vm["log-file"].as<std::string>();
         std::string log_level_str = vm["log-level"].as<std::string>();
 
-        // --- 2. Настройка Логгера (Асинхронный, чтобы не тормозить сервер) ---
-        // Используем async_logger для высокой производительности
-        auto logger = spdlog::create_async<spdlog::sinks::basic_file_sink_mt>("server.log", true, 8192, spdlog::async_overflow_policy::block, 1000);
+        // --- 2. Настройка асинхронного логгера ---
+        // Очередь на 8192 сообщения обслуживается одним фоновым потоком.
+        spdlog::init_thread_pool(8192, 1);
+        auto logger = spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+            "server", log_file, true);
 
         // Цветной вывод в консоль (для удобства отладки при запуске)
         auto colored_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -109,4 +113,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-

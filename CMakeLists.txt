@@ -8,12 +8,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Boost REQUIRED COMPONENTS system thread program_options)
 find_package(OpenSSL REQUIRED)
 find_package(spdlog REQUIRED) # Если ставишь через vcpkg/conan, иначе скачай header-only
+find_package(Threads REQUIRED)
+
+# Общая библиотека протокола
+add_library(protocol src/protocol.cpp)
+target_include_directories(protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Исходники
 add_executable(server
     src/main.cpp
     src/server.cpp
-    src/protocol.cpp
 )
 
 target_link_libraries(server PRIVATE
@@ -23,6 +27,8 @@ target_link_libraries(server PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto
     spdlog::spdlog
+    protocol
+    Threads::Threads
 )
 
 
@@ -30,7 +36,6 @@ target_link_libraries(server PRIVATE
 add_executable(client
     src/main_client.cpp
     src/client.cpp
-    src/protocol.cpp
 )
 
 target_link_libraries(client PRIVATE
@@ -40,12 +45,23 @@ target_link_libraries(client PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto
     spdlog::spdlog
+    protocol
+    Threads::Threads
 )
 
-# Тесты (заглушка пока)
 enable_testing()
-add_executable(test_server
-    tests/test_main.cpp
-    src/protocol.cpp)
+add_executable(test_packet tests/test_packet.cpp)
+target_link_libraries(test_packet PRIVATE protocol)
+add_test(NAME packet_tests COMMAND test_packet)
 
-target_link_libraries(test_server PRIVATE server)
+add_executable(test_client tests/test_client.cpp)
+target_link_libraries(test_client PRIVATE protocol Boost::system)
+add_test(NAME client_tests COMMAND test_client)
+
+add_executable(test_client_integration tests/test_client_integration.cpp)
+target_link_libraries(test_client_integration PRIVATE
+    protocol
+    Boost::system
+    Threads::Threads
+)
+add_test(NAME client_integration_tests COMMAND test_client_integration)
