@@ -2,6 +2,7 @@
 #include <boost/asio/ssl.hpp>
 #include <boost/program_options.hpp>
 #include <boost/thread.hpp>
+#include <csignal>
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -23,25 +24,30 @@ int main(int argc, char* argv[]) {
         desc.add_options()
             ("help", "produce help message")
             ("port,p", po::value<unsigned short>()->default_value(8443), "port to listen on")
-            ("cert,c", po::value<std::string>()->required(), "path to server.crt")
-            ("key,k", po::value<std::string>()->required(), "path to server.key")
+            ("cert,c", po::value<std::string>()->required(), "server certificate path (required)")
+            ("key,k", po::value<std::string>()->required(), "server private key path (required)")
             ("threads,t", po::value<int>()->default_value(4), "number of worker threads")
             ("log-file,l", po::value<std::string>()->default_value("server.log"), "path to log file")
             ("log-level", po::value<std::string>()->default_value("info"), "log level (trace, debug, info, warn, error, critical)");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
-        po::notify(vm);
 
         if (vm.count("help")) {
             std::cout << desc << "\n";
             return 0;
         }
 
+        po::notify(vm);
+
         unsigned short port = vm["port"].as<unsigned short>();
         std::string cert_path = vm["cert"].as<std::string>();
         std::string key_path = vm["key"].as<std::string>();
         int thread_count = vm["threads"].as<int>();
+        if (thread_count <= 0) {
+            std::cerr << "Argument parsing error: --threads must be positive\n";
+            return 1;
+        }
         std::string log_file = vm["log-file"].as<std::string>();
         std::string log_level_str = vm["log-level"].as<std::string>();
 
@@ -68,6 +74,10 @@ int main(int argc, char* argv[]) {
             logger->warn("Unknown log level '{}', using default 'info'", log_level_str);
         }
 
+        if (logger->level() <= spdlog::level::debug) {
+            logger->flush_on(spdlog::level::debug);
+        }
+
         logger->info("Logger initialized. Level: {}", log_level_str);
 
         // --- 3. Инициализация IO Context и SSL ---
@@ -81,6 +91,13 @@ int main(int argc, char* argv[]) {
 
         // --- 4. Создание Сервера ---
         TlsServer server(io_context, ssl_context, port, logger);
+        boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
+        signals.async_wait([&server, logger](const boost::system::error_code& error, int signal) {
+            if (!error) {
+                logger->info("Received signal {}; starting shutdown", signal);
+                server.stop();
+            }
+        });
 
         // --- 5. Пул потоков ---
         std::vector<std::thread> threads;
@@ -93,7 +110,6 @@ int main(int argc, char* argv[]) {
         }
 
         // --- 6. Ожидание завершения (Ctrl+C) ---
-        // В реальном демо-сервере здесь был бы обработчик сигналов
         logger->info("Server running on port {} with {} threads. Press Ctrl+C to stop.", port, thread_count);
 
         // Ждем, пока потоки не закончат работу (они будут крутиться в run())

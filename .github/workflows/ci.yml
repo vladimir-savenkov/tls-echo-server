@@ -56,3 +56,87 @@ jobs:
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" \
             python3 -m py_compile scripts/*.py
           bash -n scripts/*.sh
+
+  sanitizers:
+    name: ${{ matrix.sanitizer }} / Debug
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            clang cmake ninja-build libboost-all-dev libssl-dev libspdlog-dev
+
+      - name: Configure
+        env:
+          SANITIZER: ${{ matrix.sanitizer }}
+        run: >-
+          cmake -S . -B build/sanitizer -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=${SANITIZER} -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=${SANITIZER}"
+
+      - name: Build
+        run: cmake --build build/sanitizer --parallel 2
+
+      - name: Run C++ tests
+        run: ctest --test-dir build/sanitizer --output-on-failure
+
+      - name: Exercise server and client
+        run: python3 scripts/sanitizer_smoke.py build/sanitizer
+
+  memory-sanitizer:
+    name: memory / packet tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 cmake ninja-build
+
+      - name: Cache instrumented libc++
+        id: libcxx-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/msan-libcxx
+          key: msan-libcxx-llvm-18.1.8-ubuntu-24.04-v1
+
+      - name: Build instrumented libc++
+        if: steps.libcxx-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            --branch llvmorg-18.1.8 https://github.com/llvm/llvm-project.git \
+            "$RUNNER_TEMP/llvm-project"
+          git -C "$RUNNER_TEMP/llvm-project" sparse-checkout set \
+            runtimes libcxx libcxxabi libunwind cmake llvm/cmake llvm/utils/llvm-lit
+          cmake -S "$RUNNER_TEMP/llvm-project/runtimes" \
+            -B "$RUNNER_TEMP/msan-libcxx-build" -G Ninja \
+            -C "$RUNNER_TEMP/llvm-project/libcxx/cmake/caches/Generic-msan.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 \
+            '-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi' \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/msan-libcxx" \
+            -DLIBCXX_INCLUDE_TESTS=OFF -DLIBCXXABI_INCLUDE_TESTS=OFF \
+            -DLIBCXX_INCLUDE_BENCHMARKS=OFF
+          cmake --build "$RUNNER_TEMP/msan-libcxx-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/msan-libcxx-build"
+
+      - name: Run packet tests with MemorySanitizer
+        run: bash scripts/msan_packet_test.sh "$RUNNER_TEMP/msan-libcxx"

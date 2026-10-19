@@ -1,6 +1,8 @@
 # Build directories
 build/
 cmake-build-*/
+/CMakeCache.txt
+/CMakeFiles/
 
 # Compiled objects and executables
 *.o
