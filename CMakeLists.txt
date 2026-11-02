@@ -4,6 +4,16 @@ project(tls_echo_server VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Инструментация покрытия тестами (gcc/clang, см. scripts/coverage.sh)
+option(ENABLE_COVERAGE "Enable code coverage instrumentation (gcov)" OFF)
+if(ENABLE_COVERAGE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "ENABLE_COVERAGE requires GCC or Clang")
+    endif()
+    add_compile_options(--coverage -O0 -g)
+    add_link_options(--coverage)
+endif()
+
 # Поиск зависимостей
 find_package(Boost REQUIRED COMPONENTS system thread program_options)
 find_package(OpenSSL REQUIRED)

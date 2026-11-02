@@ -140,3 +140,23 @@ jobs:
 
       - name: Run packet tests with MemorySanitizer
         run: bash scripts/msan_packet_test.sh "$RUNNER_TEMP/msan-libcxx"
+
+  coverage:
+    name: coverage / Debug
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            cmake ninja-build libboost-all-dev libssl-dev libspdlog-dev
+
+      - name: Run tests with coverage
+        run: ./scripts/coverage.sh
+
+      - name: Publish coverage report to job summary
+        run: cat build/coverage/coverage-report/coverage.md >> "$GITHUB_STEP_SUMMARY"
