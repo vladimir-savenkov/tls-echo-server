@@ -77,6 +77,27 @@ target_link_libraries(test_client_integration PRIVATE
 add_test(NAME client_integration_tests COMMAND test_client_integration)
 set_tests_properties(client_integration_tests PROPERTIES TIMEOUT 30)
 
+add_executable(test_log_payload tests/test_log_payload.cpp)
+target_include_directories(test_log_payload PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME log_payload_tests COMMAND test_log_payload)
+
+# Сквозной тест: реальный TlsServer и TlsClient через TLS на loopback
+add_executable(test_tls_end_to_end
+    tests/test_tls_end_to_end.cpp
+    src/server.cpp
+    src/client.cpp
+)
+target_link_libraries(test_tls_end_to_end PRIVATE
+    Boost::system
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    spdlog::spdlog
+    protocol
+    Threads::Threads
+)
+add_test(NAME tls_end_to_end_tests COMMAND test_tls_end_to_end)
+set_tests_properties(tls_end_to_end_tests PROPERTIES TIMEOUT 30)
+
 install(TARGETS server client RUNTIME DESTINATION bin)
 install(PROGRAMS
     scripts/interactive_client.py

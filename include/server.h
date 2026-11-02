@@ -21,6 +21,9 @@ public:
     void run();
     void stop();
 
+    // Порт, к которому привязан акцептор (полезно при port == 0 — эфемерный порт)
+    unsigned short port() const { return acceptor_.local_endpoint().port(); }
+
 private:
     boost::asio::io_context& io_context_;
     boost::asio::strand<boost::asio::io_context::executor_type> control_strand_;
