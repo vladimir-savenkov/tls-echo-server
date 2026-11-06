@@ -7,7 +7,8 @@ if(WIN32)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 if(MSVC)
-    add_compile_options(/utf-8)
+    # Исключения нужны также при переопределении CMAKE_CXX_FLAGS в CI.
+    add_compile_options(/utf-8 /EHsc)
 endif()
 
 # Инструментация покрытия тестами (gcc/clang, см. scripts/coverage.sh)

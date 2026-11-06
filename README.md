@@ -229,8 +229,13 @@ cmake --build --preset windows-x64-debug
 ctest --preset windows-x64-debug
 ```
 
+Манифест vcpkg явно устанавливает `boost-asio`: пакеты `boost-system`,
+`boost-thread` и `boost-program-options` не гарантируют наличие заголовков Asio.
+CMake задаёт MSVC параметры `/utf-8` и `/EHsc`; поддержка исключений сохраняется
+также при переопределении `CMAKE_CXX_FLAGS` в CI с `/W4 /WX`.
+
 Преобразования сетевого порядка байтов находятся в `include/wire.h` и не требуют
-POSIX/Winsock. MSVC компилирует исходники как UTF-8. Генерация сертификатов
+POSIX/Winsock. Генерация сертификатов
 через `.sh` требует Bash и OpenSSL CLI; C++ TLS-тесты не требуют этих утилит.
 
 ## Журналирование
