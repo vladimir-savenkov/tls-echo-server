@@ -1,6 +1,5 @@
 #include "basic_client.h"
 
-#include <arpa/inet.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,6 +8,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <chrono>
+#include <thread>
 
 namespace {
 using ErrorCode = boost::system::error_code;
@@ -29,6 +30,8 @@ public:
         requested_reads.push_back(size);
         read_handler = std::forward<Handler>(handler);
     }
+
+    void abort() { close(); }
 
     void close() { closed = true; }
 
@@ -78,7 +81,7 @@ std::vector<char> payload_of(const Packet& packet) {
 uint32_t serialized_id(const std::vector<char>& bytes) {
     PacketHeader header{};
     std::memcpy(&header, bytes.data(), sizeof(header));
-    return ntohl(header.id);
+    return wire::from_network32(header.id);
 }
 
 void deliver_response(FakeConnection& connection, const Packet& packet) {
@@ -123,6 +126,7 @@ void test_transport_failures() {
         connection.complete_write(test_error());
         check(client.error() == ClientError::write_failed, "write error is reported");
         check(connection.requested_reads.empty(), "write error prevents reads");
+        check(connection.closed, "write failure aborts connection");
     }
     {
         FakeConnection connection;
@@ -131,6 +135,7 @@ void test_transport_failures() {
         connection.complete_write();
         connection.complete_read({}, test_error());
         check(client.error() == ClientError::header_read_failed, "header error is reported");
+        check(connection.closed, "header failure aborts connection");
     }
     {
         FakeConnection connection;
@@ -140,6 +145,7 @@ void test_transport_failures() {
         connection.complete_read(header_of(Packet(100U, "answer")));
         connection.complete_read({}, test_error());
         check(client.error() == ClientError::payload_read_failed, "payload error is reported");
+        check(connection.closed, "payload failure aborts connection");
     }
 }
 
@@ -186,6 +192,72 @@ void test_invalid_responses() {
     }
 }
 
+void test_exact_payload_and_completion() {
+    FakeConnection connection;
+    int completions = 0;
+    ClientError result = ClientError::none;
+    BasicClient<FakeConnection> client(connection, {}, [&](ClientError error) {
+        ++completions;
+        result = error;
+    });
+    client.send_packets(1);
+    connection.complete_write();
+    deliver_response(connection, Packet(100U, "different payload with valid CRC"));
+    check(client.error() == ClientError::unexpected_payload, "wrong echo with valid CRC is rejected");
+    check(client.packets_received() == 0, "wrong echo is not counted");
+    check(connection.closed, "invalid echo aborts connection");
+    check(completions == 1 && result == ClientError::unexpected_payload,
+          "failure completion is delivered exactly once");
+}
+
+void test_binary_payload_boundaries() {
+    for (std::size_t size : {std::size_t{0}, std::size_t{65535}}) {
+        FakeConnection connection;
+        int completions = 0;
+        ClientRunOptions options;
+        options.payload_size = size;
+        BasicClient<FakeConnection> client(connection, {}, [&](ClientError error) {
+            ++completions;
+            check(error == ClientError::none, "binary echo completes successfully");
+        }, options);
+        client.send_packets(1);
+        const auto& bytes = connection.writes[0];
+        const auto packet = Packet::deserialize(bytes.data(), sizeof(PacketHeader),
+            std::string(bytes.begin() + sizeof(PacketHeader), bytes.end()));
+        check(packet.length() == size, "requested binary payload size is used");
+        connection.complete_write();
+        deliver_response(connection, packet);
+        check(client.complete() && completions == 1, "success completes exactly once");
+        check(client.bytes_received() == size && client.latency().count() == 1,
+              "successful echo contributes bytes and one latency sample");
+    }
+}
+
+void test_duration_and_histogram() {
+    FakeConnection connection;
+    ClientRunOptions options;
+    options.duration = std::chrono::milliseconds(1);
+    BasicClient<FakeConnection> client(connection, {}, {}, options);
+    client.send_packets(0);
+    check(!connection.writes.empty(), "duration mode sends even with zero packet target");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    connection.complete_write();
+    deliver_response(connection, Packet(100U, "Hello from C++ Client, packet #0"));
+    check(client.complete(), "duration mode finishes after an in-flight request completes");
+
+    LatencyStats a, b;
+    check(a.percentile(0.5) == 0, "empty histogram has no latency");
+    a.record(10);
+    b.record(100);
+    b.record(1000);
+    a.merge(b);
+    check(a.count() == 3, "merged histogram keeps sample count");
+    check(a.percentile(0.5) >= 100 && a.percentile(0.5) < 110,
+          "median is the bucket upper bound within documented precision");
+    check(a.percentile(0.99) >= 1000 && a.percentile(0.99) < 1100,
+          "tail percentile selects the high sample");
+}
+
 void test_empty_and_reentrant_sequences() {
     FakeConnection connection;
     BasicClient<FakeConnection> client(connection);
@@ -205,6 +277,9 @@ int main() {
     test_transport_failures();
     test_invalid_responses();
     test_empty_and_reentrant_sequences();
+    test_exact_payload_and_completion();
+    test_binary_payload_boundaries();
+    test_duration_and_histogram();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;

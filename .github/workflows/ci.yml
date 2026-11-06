@@ -160,3 +160,21 @@ jobs:
 
       - name: Publish coverage report to job summary
         run: cat build/coverage/coverage-report/coverage.md >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: MSVC / Debug
+    runs-on: windows-2025
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Configure
+        shell: pwsh
+        run: >-
+          cmake -S . -B build/windows -A x64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DCMAKE_CXX_FLAGS="/W4 /WX /utf-8"
+      - name: Build
+        run: cmake --build build/windows --config Debug --parallel 2
+      - name: Run C++ tests
+        run: ctest --test-dir build/windows -C Debug --output-on-failure

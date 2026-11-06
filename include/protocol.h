@@ -1,5 +1,7 @@
 #pragma once
 
+#include "wire.h"
+
 #include <cstdint>
 #include <cstddef>
 #include <string>

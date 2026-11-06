@@ -41,6 +41,8 @@ public:
             });
     }
 
+    void abort() { close(); }
+
     void close() {
         boost::system::error_code ignored;
         socket_.shutdown(tcp::socket::shutdown_both, ignored);
@@ -71,7 +73,7 @@ void serve_echo(tcp::acceptor& acceptor, int packet_count,
 
         PacketHeader header{};
         std::memcpy(&header, raw_header.data(), sizeof(header));
-        std::vector<char> payload(ntohs(header.len));
+        std::vector<char> payload(wire::from_network16(header.len));
         boost::asio::read(socket, boost::asio::buffer(payload));
 
         std::vector<char> response(raw_header.begin(), raw_header.end());
@@ -117,8 +119,8 @@ void run_scenario(int packet_count, bool corrupt_response, bool fragmented,
     check(client.error() == expected_error, "client reports expected integration result");
     check(client.complete() == expected_complete, "client completion state is correct");
     if (expected_complete) {
-        check(client.packets_sent() == packet_count, "all integration packets are sent");
-        check(client.packets_received() == packet_count, "all integration packets are received");
+        check(client.packets_sent() == static_cast<uint64_t>(packet_count), "all integration packets are sent");
+        check(client.packets_received() == static_cast<uint64_t>(packet_count), "all integration packets are received");
     }
 }
 

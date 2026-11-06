@@ -1,6 +1,5 @@
 #include "protocol.h"
 
-#include <arpa/inet.h>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -14,7 +13,7 @@ uint32_t calculate_crc32(const char* data, std::size_t size) {
     for (std::size_t i = 0; i < size; ++i) {
         crc ^= static_cast<unsigned char>(data[i]);
         for (int bit = 0; bit < 8; ++bit) {
-            const uint32_t mask = -(crc & 1U);
+            const uint32_t mask = 0U - (crc & 1U);
             crc = (crc >> 1U) ^ (0xEDB88320U & mask);
         }
     }
@@ -43,9 +42,9 @@ void Packet::update_crc() {
 
 std::vector<char> Packet::serialize() const {
     PacketHeader header{};
-    header.id = htonl(id_);
-    header.len = htons(length());
-    header.crc = htonl(crc_);
+    header.id = wire::to_network32(id_);
+    header.len = wire::to_network16(length());
+    header.crc = wire::to_network32(crc_);
 
     std::vector<char> buffer(sizeof(header) + payload_.size());
     std::memcpy(buffer.data(), &header, sizeof(header));
@@ -66,7 +65,7 @@ Packet Packet::deserialize(const char* raw_header, std::size_t header_size,
 
     PacketHeader header{};
     std::memcpy(&header, raw_header, sizeof(header));
-    return Packet(ntohl(header.id), ntohs(header.len), ntohl(header.crc), payload);
+    return Packet(wire::from_network32(header.id), wire::from_network16(header.len), wire::from_network32(header.crc), payload);
 }
 
 bool Packet::verify_crc() const {

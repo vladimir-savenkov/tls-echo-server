@@ -2,10 +2,13 @@
 
 #include "protocol.h"
 #include "log_payload.h"
+#include "latency_stats.h"
+#include <chrono>
+#include <optional>
+#include <stdexcept>
 
 #include <boost/system/error_code.hpp>
 
-#include <arpa/inet.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -23,7 +26,8 @@ enum class ClientError {
     invalid_header,
     payload_read_failed,
     invalid_crc,
-    unexpected_packet_id
+    unexpected_packet_id,
+    unexpected_payload
 };
 
 inline const char* client_error_name(ClientError error) {
@@ -36,20 +40,34 @@ inline const char* client_error_name(ClientError error) {
         case ClientError::payload_read_failed: return "payload_read_failed";
         case ClientError::invalid_crc: return "invalid_crc";
         case ClientError::unexpected_packet_id: return "unexpected_packet_id";
+        case ClientError::unexpected_payload: return "unexpected_payload";
     }
     return "unknown";
 }
 
+struct ClientRunOptions {
+    std::optional<std::size_t> payload_size;
+    std::chrono::milliseconds duration{0};
+};
+
 // Connection is a compile-time interface. It must provide:
 //   async_write(vector<char>, handler(error_code, size_t))
 //   async_read_exactly(size_t, handler(error_code, vector<char>))
-//   close()
+//   close() / abort()
 template <typename Connection>
 class BasicClient {
 public:
     explicit BasicClient(Connection& connection,
-                         std::function<void(const std::string&)> state_callback = {})
-        : connection_(connection), state_callback_(std::move(state_callback)) {}
+                         std::function<void(const std::string&)> state_callback = {},
+                         std::function<void(ClientError)> completion_callback = {},
+                         ClientRunOptions options = {})
+        : connection_(connection), state_callback_(std::move(state_callback)),
+          completion_callback_(std::move(completion_callback)), options_(options) {
+        if ((options_.payload_size && *options_.payload_size > 65535) ||
+            options_.duration.count() < 0) {
+            throw std::invalid_argument("Invalid client run options");
+        }
+    }
 
     void send_packets(int count) {
         if (active_) {
@@ -58,11 +76,15 @@ public:
             return;
         }
 
+        notified_ = false;
+        latency_ = {};
+        bytes_received_ = 0;
+        run_started_ = std::chrono::steady_clock::now();
         packets_sent_ = 0;
         packets_received_ = 0;
-        packets_to_send_ = count > 0 ? count : 0;
+        packets_to_send_ = count > 0 ? static_cast<uint64_t>(count) : 0;
         error_ = ClientError::none;
-        complete_ = packets_to_send_ == 0;
+        complete_ = packets_to_send_ == 0 && options_.duration.count() == 0;
         active_ = !complete_;
         if (state_callback_) {
             log_state("request sequence started: target=" + std::to_string(packets_to_send_));
@@ -70,26 +92,37 @@ public:
 
         if (active_) {
             send_next_packet();
+        } else {
+            connection_.close();
+            notify();
         }
     }
 
-    int packets_sent() const { return packets_sent_; }
-    int packets_received() const { return packets_received_; }
+    uint64_t packets_sent() const { return packets_sent_; }
+    uint64_t packets_received() const { return packets_received_; }
     bool complete() const { return complete_; }
     bool active() const { return active_; }
     ClientError error() const { return error_; }
+    uint64_t bytes_received() const { return bytes_received_; }
+    const LatencyStats& latency() const { return latency_; }
 
 private:
     void send_next_packet() {
-        const int packet_number = packets_sent_;
-        const std::string payload =
-            "Hello from C++ Client, packet #" + std::to_string(packet_number);
-        auto bytes = Packet(100U + static_cast<uint32_t>(packet_number), payload).serialize();
+        const auto packet_number = packets_sent_;
+        expected_payload_ = "Hello from C++ Client, packet #" + std::to_string(packet_number);
+        if (options_.payload_size) {
+            expected_payload_.resize(*options_.payload_size);
+            for (std::size_t i = 0; i < expected_payload_.size(); ++i) {
+                expected_payload_[i] = static_cast<char>((i + packet_number) % 256);
+            }
+        }
+        request_started_ = std::chrono::steady_clock::now();
+        auto bytes = Packet(100U + static_cast<uint32_t>(packet_number), expected_payload_).serialize();
         if (state_callback_) {
             log_state("sending packet=" + std::to_string(packet_number + 1) +
                       "/" + std::to_string(packets_to_send_) +
                       ", id=" + std::to_string(100U + packet_number) +
-                      ", data=\"" + escape_log_payload(payload) + "\"");
+                      ", data=\"" + escape_log_payload(expected_payload_) + "\"");
         }
 
         connection_.async_write(std::move(bytes),
@@ -129,9 +162,9 @@ private:
 
                 PacketHeader decoded{};
                 std::memcpy(&decoded, header.data(), sizeof(decoded));
-                const std::size_t payload_size = ntohs(decoded.len);
+                const std::size_t payload_size = wire::from_network16(decoded.len);
                 if (state_callback_) {
-                    log_state("response header parsed: id=" + std::to_string(ntohl(decoded.id)) +
+                    log_state("response header parsed: id=" + std::to_string(wire::from_network32(decoded.id)) +
                               ", payload_bytes=" + std::to_string(payload_size));
                 }
                 read_payload(std::move(header), payload_size);
@@ -178,21 +211,31 @@ private:
                         fail(ClientError::unexpected_packet_id);
                         return;
                     }
+                    if (packet.payload() != expected_payload_) {
+                        fail(ClientError::unexpected_payload);
+                        return;
+                    }
                 } catch (const std::exception&) {
                     fail(ClientError::invalid_header);
                     return;
                 }
 
                 ++packets_received_;
+                bytes_received_ += payload.size();
+                const auto now = std::chrono::steady_clock::now();
+                latency_.record(std::chrono::duration<double, std::micro>(now - request_started_).count());
                 if (state_callback_) {
                     log_state("response validated: received=" + std::to_string(packets_received_) +
                               "/" + std::to_string(packets_to_send_));
                 }
-                if (packets_received_ == packets_to_send_) {
+                if (options_.duration.count() > 0
+                        ? now - run_started_ >= options_.duration
+                        : packets_received_ == packets_to_send_) {
                     active_ = false;
                     complete_ = true;
                     if (state_callback_) log_state("request sequence complete; closing connection");
                     connection_.close();
+                    notify();
                     return;
                 }
                 send_next_packet();
@@ -206,6 +249,14 @@ private:
         error_ = error;
         active_ = false;
         complete_ = false;
+        connection_.abort();
+        notify();
+    }
+
+    void notify() {
+        if (notified_) return;
+        notified_ = true;
+        if (completion_callback_) completion_callback_(error_);
     }
 
     void log_state(const std::string& state) const {
@@ -216,9 +267,16 @@ private:
 
     Connection& connection_;
     std::function<void(const std::string&)> state_callback_;
-    int packets_sent_ = 0;
-    int packets_received_ = 0;
-    int packets_to_send_ = 0;
+    std::function<void(ClientError)> completion_callback_;
+    ClientRunOptions options_;
+    std::string expected_payload_;
+    std::chrono::steady_clock::time_point request_started_, run_started_;
+    LatencyStats latency_;
+    uint64_t bytes_received_ = 0;
+    uint64_t packets_sent_ = 0;
+    uint64_t packets_received_ = 0;
+    uint64_t packets_to_send_ = 0;
+    bool notified_ = false;
     bool active_ = false;
     bool complete_ = false;
     ClientError error_ = ClientError::none;

@@ -1,6 +1,5 @@
 #include "protocol.h"
 
-#include <arpa/inet.h>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -54,9 +53,9 @@ void test_construction_and_serialization() {
           "serialized size contains header and payload");
     PacketHeader header{};
     std::memcpy(&header, bytes.data(), sizeof(header));
-    check(ntohl(header.id) == packet.id(), "id uses network byte order");
-    check(ntohs(header.len) == payload.size(), "length uses network byte order");
-    check(ntohl(header.crc) == packet.crc(), "CRC uses network byte order");
+    check(wire::from_network32(header.id) == packet.id(), "id uses network byte order");
+    check(wire::from_network16(header.len) == payload.size(), "length uses network byte order");
+    check(wire::from_network32(header.crc) == packet.crc(), "CRC uses network byte order");
     check(std::string(bytes.data() + sizeof(header), payload.size()) == payload,
           "serialization preserves payload bytes");
 }
@@ -87,8 +86,8 @@ void test_invalid_input_and_boundaries() {
         "mismatched payload length is rejected");
 
     PacketHeader header{};
-    header.id = htonl(1U);
-    header.len = htons(2U);
+    header.id = wire::to_network32(1U);
+    header.len = wire::to_network16(2U);
     check_throws<std::invalid_argument>(
         [&] { Packet::deserialize(nullptr, sizeof(header), "xx"); },
         "null header is rejected");

@@ -27,6 +27,10 @@ int main(int argc, char* argv[]) {
             ("cert,c", po::value<std::string>()->required(), "server certificate path (required)")
             ("key,k", po::value<std::string>()->required(), "server private key path (required)")
             ("threads,t", po::value<int>()->default_value(4), "number of worker threads")
+            ("max-connections", po::value<int>()->default_value(1024), "maximum active sessions")
+            ("max-payload", po::value<int>()->default_value(65535), "maximum payload, 0..65535 bytes")
+            ("timeout-ms", po::value<int>()->default_value(10000), "deadline per network operation, milliseconds")
+            ("shutdown-timeout-ms", po::value<int>()->default_value(5000), "active session drain deadline, milliseconds")
             ("log-file,l", po::value<std::string>()->default_value("server.log"), "path to log file")
             ("log-level", po::value<std::string>()->default_value("info"), "log level (trace, debug, info, warn, error, critical)");
 
@@ -48,6 +52,20 @@ int main(int argc, char* argv[]) {
             std::cerr << "Argument parsing error: --threads must be positive\n";
             return 1;
         }
+        const int max_connections = vm["max-connections"].as<int>();
+        const int max_payload = vm["max-payload"].as<int>();
+        const int timeout_ms = vm["timeout-ms"].as<int>();
+        const int shutdown_ms = vm["shutdown-timeout-ms"].as<int>();
+        if (max_connections <= 0 || max_payload < 0 || max_payload > 65535 ||
+            timeout_ms <= 0 || shutdown_ms <= 0) {
+            std::cerr << "Ошибка аргументов: неверный лимит соединений, пакета или таймаут\n";
+            return 1;
+        }
+        ServerOptions server_options;
+        server_options.max_connections = static_cast<std::size_t>(max_connections);
+        server_options.max_payload = static_cast<std::size_t>(max_payload);
+        server_options.operation_timeout = std::chrono::milliseconds(timeout_ms);
+        server_options.shutdown_timeout = std::chrono::milliseconds(shutdown_ms);
         std::string log_file = vm["log-file"].as<std::string>();
         std::string log_level_str = vm["log-level"].as<std::string>();
 
@@ -90,7 +108,7 @@ int main(int argc, char* argv[]) {
         logger->info("SSL Context configured. Cert: {}, Key: {}", cert_path, key_path);
 
         // --- 4. Создание Сервера ---
-        TlsServer server(io_context, ssl_context, port, logger);
+        TlsServer server(io_context, ssl_context, port, logger, server_options);
         boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
         signals.async_wait([&server, logger](const boost::system::error_code& error, int signal) {
             if (!error) {
@@ -117,7 +135,10 @@ int main(int argc, char* argv[]) {
             t.join();
         }
 
-        logger->info("Server stopped");
+        const auto stats = server.stats();
+        logger->info("Сервер остановлен: принято={}, отклонено={}, таймауты={}, "
+                     "превышение размера={}, активно={}", stats.accepted, stats.rejected,
+                     stats.timed_out, stats.oversized, stats.active);
 
     } catch (const po::error& e) {
         std::cerr << "Argument parsing error: " << e.what() << "\n";
