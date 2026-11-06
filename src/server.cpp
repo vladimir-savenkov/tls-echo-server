@@ -59,8 +59,7 @@ void TlsServer::session_finished(uint64_t id, bool timed_out, bool oversized) {
         if (timed_out) ++timed_out_;
         if (oversized) ++oversized_;
         if (stopping_ && sessions_.empty()) {
-            boost::system::error_code ignored;
-            drain_timer_.cancel(ignored);
+            drain_timer_.cancel();
         }
     });
 }

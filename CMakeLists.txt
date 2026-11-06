@@ -3,6 +3,8 @@ project(tls_echo_server VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Выявляем устаревшие API Asio, удалённые в новых версиях Boost.
+add_compile_definitions(BOOST_ASIO_NO_DEPRECATED)
 if(WIN32)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()

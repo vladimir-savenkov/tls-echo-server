@@ -233,6 +233,9 @@ ctest --preset windows-x64-debug
 `boost-thread` и `boost-program-options` не гарантируют наличие заголовков Asio.
 CMake задаёт MSVC параметры `/utf-8` и `/EHsc`; поддержка исключений сохраняется
 также при переопределении `CMAKE_CXX_FLAGS` в CI с `/W4 /WX`.
+Для всех целей определён `BOOST_ASIO_NO_DEPRECATED`, чтобы Linux-сборки также
+выявляли использование удалённых API Asio. Таймеры отменяются через `cancel()`
+без аргумента `error_code`, совместимый со старыми и новыми версиями Boost.
 
 Преобразования сетевого порядка байтов находятся в `include/wire.h` и не требуют
 POSIX/Winsock. Генерация сертификатов

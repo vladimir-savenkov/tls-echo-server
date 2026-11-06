@@ -27,8 +27,7 @@ public:
 
     void cancel() {
         ++generation_;
-        boost::system::error_code ignored;
-        timer_.cancel(ignored);
+        timer_.cancel();
     }
     bool expired() const { return expired_; }
 
