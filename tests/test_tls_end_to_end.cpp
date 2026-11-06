@@ -176,16 +176,18 @@ void test_server_rejects_corrupted_payload() {
     {
         boost::asio::ssl::stream<boost::asio::ip::tcp::socket> raw(io, client_ctx);
         boost::system::error_code ec;
+        // Wildcard 0.0.0.0 подходит для bind, но Winsock отвергает его в connect.
         raw.lowest_layer().connect(
-            boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), server.port()), ec);
-        check(!ec, "raw client connects");
+            boost::asio::ip::tcp::endpoint(
+                boost::asio::ip::address_v4::loopback(), server.port()), ec);
+        check(!ec, ("raw client connects: " + ec.message()).c_str());
         raw.handshake(boost::asio::ssl::stream_base::client, ec);
-        check(!ec, "raw client completes TLS handshake");
+        check(!ec, ("raw client completes TLS handshake: " + ec.message()).c_str());
 
         std::vector<char> bytes = Packet(100U, "legitimate payload").serialize();
         bytes.back() ^= 0xFF;  // повреждаем байт полезной нагрузки -> CRC не сойдётся
         boost::asio::write(raw, boost::asio::buffer(bytes), ec);
-        check(!ec, "raw client writes the corrupted packet");
+        check(!ec, ("raw client writes the corrupted packet: " + ec.message()).c_str());
 
         char sink[32] = {};
         raw.read_some(boost::asio::buffer(sink), ec);
