@@ -97,7 +97,18 @@ TlsServer::Session::Session(boost::asio::io_context& io, boost::asio::ip::tcp::s
                            std::function<void(bool, bool)> on_finished)
     : strand_(boost::asio::make_strand(io)), socket_(std::move(socket), ssl),
       deadline_(strand_), logger_(std::move(logger)), options_(options),
-      on_finished_(std::move(on_finished)) {}
+      on_finished_(std::move(on_finished)) {
+    // TCP_NODELAY: без него алгоритм Нагла придерживает хвостовые сегменты
+    // ответов до ACK клиента, и паузы delayed-ACK ядра (до 40 мс на Linux,
+    // 200 мс на Windows) попадают в измеряемые задержки echo.
+    boost::system::error_code nodelay_error;
+    socket_.lowest_layer().set_option(boost::asio::ip::tcp::no_delay(true), nodelay_error);
+    if (nodelay_error) {
+        logger_->warn("Cannot disable Nagle algorithm: {}", nodelay_error.message());
+    } else {
+        logger_->debug("TCP_NODELAY enabled on session socket");
+    }
+}
 
 void TlsServer::Session::arm(const char* stage) {
     logger_->debug("Server {} scheduled", stage);
