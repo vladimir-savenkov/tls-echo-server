@@ -74,6 +74,18 @@ void TlsClient::start(int packet_count) {
                     [this, packet_count](boost::system::error_code connect_error,
                                          const boost::asio::ip::tcp::endpoint&) {
                         if (stage_failed("connect", connect_error)) return;
+                        // TCP_NODELAY до handshake: и записи handshake, и запросы
+                        // не должны ждать ACK по алгоритму Нагла — иначе паузы
+                        // delayed-ACK ядра попадают в измеряемые задержки.
+                        boost::system::error_code nodelay_error;
+                        socket_.lowest_layer().set_option(
+                            boost::asio::ip::tcp::no_delay(true), nodelay_error);
+                        if (nodelay_error) {
+                            logger_->warn("Client {}: cannot disable Nagle algorithm: {}",
+                                          client_number_, nodelay_error.message());
+                        } else {
+                            logger_->debug("Client {}: TCP_NODELAY enabled", client_number_);
+                        }
                         arm("TLS handshake");
                         socket_.async_handshake(boost::asio::ssl::stream_base::client,
                             boost::asio::bind_executor(strand_,
