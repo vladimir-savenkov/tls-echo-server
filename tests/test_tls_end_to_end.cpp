@@ -24,6 +24,11 @@
 #include <thread>
 #include <vector>
 
+#if defined(__linux__)
+#include <dirent.h>
+#include <sys/resource.h>
+#endif
+
 namespace {
 int failures = 0;
 
@@ -469,6 +474,71 @@ void test_concurrent_tls_and_shutdown() {
           "server drains concurrent sessions");
 }
 
+#if defined(__linux__)
+// Backoff в цикле accept: при исчерпании fd (EMFILE) сервер обязан
+// повторять accept с паузой, а не крутиться в busy-loop, и продолжать
+// работу после освобождения ресурса. Понижаем лимит дескрипторов
+// процесса, открываем «сырые» TCP-соединения без TLS — сервер держит
+// их дескрипторы в ожидании handshake, и accept падает с EMFILE.
+void test_accept_error_backoff() {
+    const auto pem = make_self_signed_pem();
+    auto logger = make_quiet_debug_logger();
+    boost::asio::io_context io;
+    auto server_ctx = make_server_context(pem);
+    TlsServer server(io, server_ctx, 0, logger);
+
+    // Сколько дескрипторов открыто сейчас; оставляем процессу лишь
+    // небольшой запас, чтобы десятки соединений исчерпали таблицу.
+    std::size_t used = 0;
+    if (DIR* dir = opendir("/proc/self/fd")) {
+        while (readdir(dir) != nullptr) ++used;
+        closedir(dir);
+    }
+    rlimit original{};
+    bool limited = getrlimit(RLIMIT_NOFILE, &original) == 0;
+    if (limited) {
+        rlimit lowered{used + 32, original.rlim_max};
+        limited = lowered.rlim_cur <= original.rlim_max &&
+            setrlimit(RLIMIT_NOFILE, &lowered) == 0;
+    }
+    if (!limited) {
+        check(false, "accept backoff: fd limit can be lowered");
+        return;
+    }
+
+    std::vector<boost::asio::ip::tcp::socket> holders;
+    for (int i = 0; i < 64; ++i) {
+        boost::asio::ip::tcp::socket raw(io);
+        boost::system::error_code ec;
+        raw.connect({boost::asio::ip::address_v4::loopback(), server.port()}, ec);
+        if (ec) break;  // свои дескрипторы исчерпаны
+        holders.push_back(std::move(raw));
+        io.poll();  // сервер занимает дескриптор принятого соединения
+        if (server.stats().accept_errors > 0) break;  // accept уже падает
+    }
+    check(server.stats().accept_errors > 0,
+          "accept fails with EMFILE under fd exhaustion");
+
+    holders.clear();      // серверные сессии увидят EOF и освободят fd
+    io.poll();
+    setrlimit(RLIMIT_NOFILE, &original);  // вернуть лимит процессу
+
+    // После паузы сервер возобновляет accept и снова обрабатывает echo.
+    auto client_ctx = std::make_unique<boost::asio::ssl::context>(
+        boost::asio::ssl::context::tls_client);
+    client_ctx->set_verify_mode(boost::asio::ssl::verify_peer);
+    client_ctx->add_certificate_authority(boost::asio::buffer(pem.certificate));
+    int completions = 0;
+    TlsClient client(io, *client_ctx, "127.0.0.1", server.port(), logger, 1, {},
+                     [&] { ++completions; });
+    client.start(5);
+    check(wait_for(io, [&] { return completions == 1; }, std::chrono::seconds(10)),
+          "server accepts again after accept backoff");
+    check(client.succeeded() && client.packets_received() == 5,
+          "echo works after accept backoff");
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -481,6 +551,9 @@ int main() {
     test_concurrent_tls_and_shutdown();
     test_shutdown_with_busy_and_idle_sessions();
     test_transport_write_deadline();
+#if defined(__linux__)
+    test_accept_error_backoff();
+#endif
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;

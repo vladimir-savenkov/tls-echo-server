@@ -1,16 +1,30 @@
 #include "server.h"
 #include "log_payload.h"
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
+
+namespace {
+
+// Пауза повтора accept после подряд идущих ошибок: 100, 200, 400, 800 мс и
+// далее 800 мс — быстрое восстановление после разовой ошибки без busy-loop
+// при длительном исчерпании ресурса (EMFILE).
+std::chrono::milliseconds accept_retry_delay(std::size_t consecutive_errors) {
+    const auto doublings = std::min<std::size_t>(consecutive_errors, 3);
+    return std::chrono::milliseconds(100 << doublings);
+}
+
+}  // namespace
 
 TlsServer::TlsServer(boost::asio::io_context& io_context,
                     boost::asio::ssl::context& ssl_context, unsigned short port,
                     std::shared_ptr<spdlog::logger> logger, ServerOptions options)
     : io_context_(io_context), control_strand_(boost::asio::make_strand(io_context)),
       acceptor_(io_context), ssl_context_(ssl_context), logger_(std::move(logger)),
-      drain_timer_(control_strand_), options_(options), port_(port) {
+      drain_timer_(control_strand_), retry_timer_(control_strand_), options_(options), port_(port) {
     if (options_.max_connections == 0 || options_.max_payload > 65535 ||
         options_.operation_timeout.count() <= 0 || options_.shutdown_timeout.count() <= 0) {
         throw std::invalid_argument("Invalid server limits or timeouts");
@@ -32,7 +46,8 @@ TlsServer::~TlsServer() {
 void TlsServer::run() { io_context_.run(); }
 
 ServerStats TlsServer::stats() const {
-    return {accepted_.load(), rejected_.load(), timed_out_.load(), oversized_.load(), active_.load()};
+    return {accepted_.load(), rejected_.load(), accept_errors_.load(),
+            timed_out_.load(), oversized_.load(), active_.load()};
 }
 
 void TlsServer::stop() {
@@ -69,24 +84,41 @@ void TlsServer::do_accept() {
     acceptor_.async_accept(boost::asio::bind_executor(control_strand_,
         [this](boost::system::error_code error, boost::asio::ip::tcp::socket socket) {
             if (stopping_) return;
-            if (!error) {
-                if (sessions_.size() >= options_.max_connections) {
-                    ++rejected_;
-                    boost::system::error_code ignored;
-                    socket.close(ignored);
-                } else {
-                    const auto id = ++next_session_;
-                    auto session = std::make_shared<Session>(io_context_, std::move(socket),
-                        ssl_context_, logger_, options_, id, [this, id](bool timeout, bool oversized) {
-                            session_finished(id, timeout, oversized);
-                        });
-                    sessions_.emplace(id, session);
-                    ++accepted_;
-                    active_ = sessions_.size();
-                    session->start();
+            if (error) {
+                // Ошибка accept (например, EMFILE при исчерпании дескрипторов)
+                // без паузы превращается в busy-loop: поток ошибок и 100% CPU.
+                // Повтор через растущую паузу 100..800 мс; первая ошибка серии
+                // и каждая десятая логируются, чтобы не заспамить журнал.
+                const bool first = consecutive_accept_errors_ == 0;
+                const auto delay = accept_retry_delay(consecutive_accept_errors_);
+                ++consecutive_accept_errors_;
+                ++accept_errors_;
+                if (first || consecutive_accept_errors_ % 10 == 0) {
+                    logger_->error("Accept error (attempt {}): {}; retrying in {} ms",
+                        consecutive_accept_errors_, error.message(), delay.count());
                 }
+                retry_timer_.expires_after(delay);
+                retry_timer_.async_wait([this](boost::system::error_code timer_error) {
+                    if (timer_error || stopping_) return;
+                    do_accept();
+                });
+                return;
+            }
+            consecutive_accept_errors_ = 0;
+            if (sessions_.size() >= options_.max_connections) {
+                ++rejected_;
+                boost::system::error_code ignored;
+                socket.close(ignored);
             } else {
-                logger_->error("Accept error: {}", error.message());
+                const auto id = ++next_session_;
+                auto session = std::make_shared<Session>(io_context_, std::move(socket),
+                    ssl_context_, logger_, options_, id, [this, id](bool timeout, bool oversized) {
+                        session_finished(id, timeout, oversized);
+                    });
+                sessions_.emplace(id, session);
+                ++accepted_;
+                active_ = sessions_.size();
+                session->start();
             }
             do_accept();
         }));

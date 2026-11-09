@@ -22,6 +22,7 @@ struct ServerOptions {
 struct ServerStats {
     uint64_t accepted = 0;
     uint64_t rejected = 0;
+    uint64_t accept_errors = 0;
     uint64_t timed_out = 0;
     uint64_t oversized = 0;
     uint64_t active = 0;
@@ -47,12 +48,17 @@ private:
     boost::asio::ssl::context& ssl_context_;
     std::shared_ptr<spdlog::logger> logger_;
     boost::asio::steady_timer drain_timer_;
+    boost::asio::steady_timer retry_timer_;
     ServerOptions options_;
     unsigned short port_;
     std::unordered_map<uint64_t, std::shared_ptr<Session>> sessions_;
     uint64_t next_session_ = 0;
+    // Счётчик подряд идущих ошибок accept: управляет паузой повтора и
+    // частотой логирования; сбрасывается при первом успешном accept.
+    std::size_t consecutive_accept_errors_ = 0;
     bool stopping_ = false;
-    std::atomic<uint64_t> accepted_{0}, rejected_{0}, timed_out_{0}, oversized_{0}, active_{0};
+    std::atomic<uint64_t> accepted_{0}, rejected_{0}, accept_errors_{0}, timed_out_{0},
+        oversized_{0}, active_{0};
 
     void do_accept();
     void session_finished(uint64_t id, bool timed_out, bool oversized);
