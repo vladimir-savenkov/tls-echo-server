@@ -61,7 +61,8 @@ private:
     public:
         Session(boost::asio::io_context& io, boost::asio::ip::tcp::socket socket,
                 boost::asio::ssl::context& ssl, std::shared_ptr<spdlog::logger> logger,
-                ServerOptions options, std::function<void(bool, bool)> on_finished);
+                ServerOptions options, uint64_t session_id,
+                std::function<void(bool, bool)> on_finished);
         void start();
         void cancel();
     private:
@@ -78,7 +79,11 @@ private:
         OperationDeadline deadline_;
         std::shared_ptr<spdlog::logger> logger_;
         ServerOptions options_;
+        uint64_t session_id_ = 0;
         std::function<void(bool, bool)> on_finished_;
+        // Адрес удалённой стороны фиксируется один раз при создании: позже сокет
+        // может закрыться, и endpoint будет недоступен для логов.
+        std::string remote_;
         bool finished_ = false;
         char header_buf_[sizeof(PacketHeader)]{};
         std::string payload_buf_;

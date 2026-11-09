@@ -77,7 +77,7 @@ void TlsServer::do_accept() {
                 } else {
                     const auto id = ++next_session_;
                     auto session = std::make_shared<Session>(io_context_, std::move(socket),
-                        ssl_context_, logger_, options_, [this, id](bool timeout, bool oversized) {
+                        ssl_context_, logger_, options_, id, [this, id](bool timeout, bool oversized) {
                             session_finished(id, timeout, oversized);
                         });
                     sessions_.emplace(id, session);
@@ -95,26 +95,32 @@ void TlsServer::do_accept() {
 TlsServer::Session::Session(boost::asio::io_context& io, boost::asio::ip::tcp::socket socket,
                            boost::asio::ssl::context& ssl,
                            std::shared_ptr<spdlog::logger> logger, ServerOptions options,
+                           uint64_t session_id,
                            std::function<void(bool, bool)> on_finished)
     : strand_(boost::asio::make_strand(io)), socket_(std::move(socket), ssl),
       deadline_(strand_), logger_(std::move(logger)), options_(options),
-      on_finished_(std::move(on_finished)) {
+      session_id_(session_id), on_finished_(std::move(on_finished)) {
+    boost::system::error_code endpoint_error;
+    const auto remote = socket_.lowest_layer().remote_endpoint(endpoint_error);
+    if (!endpoint_error) remote_ = remote.address().to_string() + ":" + std::to_string(remote.port());
     // TCP_NODELAY: без него алгоритм Нагла придерживает хвостовые сегменты
     // ответов до ACK клиента, и паузы delayed-ACK ядра (до 40 мс на Linux,
     // 200 мс на Windows) попадают в измеряемые задержки echo.
     boost::system::error_code nodelay_error;
     socket_.lowest_layer().set_option(boost::asio::ip::tcp::no_delay(true), nodelay_error);
     if (nodelay_error) {
-        logger_->warn("Cannot disable Nagle algorithm: {}", nodelay_error.message());
+        logger_->warn("Session {}: cannot disable Nagle algorithm: {}",
+                      session_id_, nodelay_error.message());
     } else {
-        logger_->debug("TCP_NODELAY enabled on session socket");
+        logger_->debug("Session {} TCP_NODELAY enabled", session_id_);
     }
 }
 
 void TlsServer::Session::arm(const char* stage) {
-    logger_->debug("Server {} scheduled", stage);
+    logger_->debug("Session {} ({}): {} scheduled", session_id_, remote_, stage);
     deadline_.arm(options_.operation_timeout, [self = shared_from_this(), stage] {
-        self->logger_->warn("Server {} timed out", stage);
+        self->logger_->warn("Session {} ({}): {} timed out",
+                            self->session_id_, self->remote_, stage);
         self->finish(true);
     });
 }
@@ -123,7 +129,8 @@ bool TlsServer::Session::failed(boost::system::error_code error) {
     deadline_.cancel();
     if (finished_) return true;
     if (error) {
-        logger_->debug("Server operation failed: {}", error.message());
+        logger_->debug("Session {} ({}): operation failed: {}",
+                       session_id_, remote_, error.message());
         finish();
         return true;
     }
@@ -172,7 +179,9 @@ void TlsServer::Session::read_header() {
             self->expected_len_ = wire::from_network16(header.len);
             self->expected_crc_ = wire::from_network32(header.crc);
             if (self->expected_len_ > self->options_.max_payload) {
-                self->logger_->warn("Payload exceeds server limit: {}", self->expected_len_);
+                self->logger_->warn("Session {} ({}): payload {} exceeds server limit {}",
+                                     self->session_id_, self->remote_, self->expected_len_,
+                                     self->options_.max_payload);
                 self->finish(false, true);
                 return;
             }
@@ -188,12 +197,14 @@ void TlsServer::Session::read_payload() {
         [self = shared_from_this()](boost::system::error_code error, std::size_t size) {
             if (self->failed(error)) return;
             if (calculate_crc32(self->payload_buf_.data(), size) != self->expected_crc_) {
-                self->logger_->warn("CRC mismatch: id={}", self->current_id_);
+                self->logger_->warn("Session {} ({}): CRC mismatch for packet id={}",
+                                     self->session_id_, self->remote_, self->current_id_);
                 self->finish();
                 return;
             }
             if (self->logger_->should_log(spdlog::level::debug)) {
-                self->logger_->debug("Server received id={}, data=\"{}\"", self->current_id_,
+                self->logger_->debug("Session {} ({}) received id={}, data=\"{}\"",
+                                     self->session_id_, self->remote_, self->current_id_,
                                      escape_log_payload(self->payload_buf_));
             }
             self->write_response();
@@ -202,7 +213,8 @@ void TlsServer::Session::read_payload() {
 
 void TlsServer::Session::write_response() {
     if (logger_->should_log(spdlog::level::debug)) {
-        logger_->debug("Server sending id={}, data=\"{}\"", current_id_,
+        logger_->debug("Session {} ({}) sending id={}, data=\"{}\"",
+                       session_id_, remote_, current_id_,
                        escape_log_payload(payload_buf_));
     }
     // Echo-ответ байт-в-байт совпадает с принятыми данными: header_buf_ уже
