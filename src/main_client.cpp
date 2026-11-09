@@ -2,6 +2,7 @@
 #include <boost/asio/ssl.hpp>
 #include <boost/program_options.hpp>
 #include <boost/thread.hpp>
+#include <openssl/ssl.h>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -112,8 +113,13 @@ int main(int argc, char* argv[]) {
         std::vector<std::unique_ptr<boost::asio::ssl::context>> ssl_contexts;
         ssl_contexts.reserve(static_cast<std::size_t>(client_count));
         for (int index = 0; index < client_count; ++index) {
+            // Пол TLS 1.2, потолок открыт: negotiate доходит до TLS 1.3 и выше,
+            // поддерживаемых OpenSSL. Фиксация только 1.2 (tlsv12_client) отрезала
+            // бы 1-RTT handshake TLS 1.3, влияющий на измеряемую задержку
+            // DNS + TCP + TLS; пол ниже 1.2 недопустим (RFC 8996).
             auto context = std::make_unique<boost::asio::ssl::context>(
-                boost::asio::ssl::context::tlsv12_client);
+                boost::asio::ssl::context::tls_client);
+            SSL_CTX_set_min_proto_version(context->native_handle(), TLS1_2_VERSION);
             if (vm.count("insecure")) {
                 context->set_verify_mode(boost::asio::ssl::verify_none);
             } else {

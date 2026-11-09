@@ -15,7 +15,7 @@
 - C++17 (CMake ≥ 3.16, сборка Ninja или Make)
 - Boost.Asio (асинхронный ввод-вывод), Boost.Program_options (CLI),
   Boost.Thread
-- OpenSSL (TLS 1.2)
+- OpenSSL (TLS 1.2 и выше: negotiate до 1.3, пол 1.2, RFC 8996)
 - spdlog (асинхронное журналирование: файл + цветной stdout)
 - Python 3 (вспомогательные клиенты и проверки CI)
 - Зависимости: системные пакеты Ubuntu (`libboost-all-dev`, `libssl-dev`,
