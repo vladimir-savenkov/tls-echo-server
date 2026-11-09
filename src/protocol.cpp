@@ -1,8 +1,33 @@
 #include "protocol.h"
 
+#include <array>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+
+namespace {
+
+// Таблица CRC32 (полином zlib 0xEDB88320, отражённый). Вычисляется во время
+// компиляции тем же побитовым алгоритмом — эталон и таблица не могут
+// разойтись. Табличный вариант даёт тот же результат одним XOR и сдвигом
+// на байт вместо 8 итераций внутреннего цикла.
+constexpr std::array<uint32_t, 256> make_crc32_table() {
+    std::array<uint32_t, 256> table{};
+    for (uint32_t i = 0; i < 256; ++i) {
+        uint32_t crc = i;
+        for (int bit = 0; bit < 8; ++bit) {
+            const uint32_t mask = 0U - (crc & 1U);
+            crc = (crc >> 1U) ^ (0xEDB88320U & mask);
+        }
+        table[i] = crc;
+    }
+    return table;
+}
+
+constexpr auto crc32_table = make_crc32_table();
+
+}  // namespace
 
 uint32_t calculate_crc32(const char* data, std::size_t size) {
     if (data == nullptr && size != 0) {
@@ -11,11 +36,8 @@ uint32_t calculate_crc32(const char* data, std::size_t size) {
 
     uint32_t crc = 0xFFFFFFFFU;
     for (std::size_t i = 0; i < size; ++i) {
-        crc ^= static_cast<unsigned char>(data[i]);
-        for (int bit = 0; bit < 8; ++bit) {
-            const uint32_t mask = 0U - (crc & 1U);
-            crc = (crc >> 1U) ^ (0xEDB88320U & mask);
-        }
+        crc = (crc >> 8U) ^
+              crc32_table[(crc ^ static_cast<unsigned char>(data[i])) & 0xFFU];
     }
     return crc ^ 0xFFFFFFFFU;
 }
