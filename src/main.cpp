@@ -2,6 +2,7 @@
 #include <boost/asio/ssl.hpp>
 #include <boost/program_options.hpp>
 #include <boost/thread.hpp>
+#include <openssl/ssl.h>
 #include <csignal>
 #include <iostream>
 #include <fstream>
@@ -100,7 +101,12 @@ int main(int argc, char* argv[]) {
 
         // --- 3. Инициализация IO Context и SSL ---
         boost::asio::io_context io_context;
-        boost::asio::ssl::context ssl_context(boost::asio::ssl::context::tlsv12_server);
+        // Пол TLS 1.2, потолок открыт: negotiate доходит до TLS 1.3 и выше,
+        // поддерживаемых OpenSSL. Фиксация только 1.2 (tlsv12_server) отрезала
+        // бы 1-RTT handshake TLS 1.3, влияющий на измеряемую задержку установки
+        // соединения; пол ниже 1.2 недопустим (RFC 8996).
+        boost::asio::ssl::context ssl_context(boost::asio::ssl::context::tls_server);
+        SSL_CTX_set_min_proto_version(ssl_context.native_handle(), TLS1_2_VERSION);
 
         ssl_context.use_certificate_file(cert_path, boost::asio::ssl::context::file_format::pem);
         ssl_context.use_private_key_file(key_path, boost::asio::ssl::context::file_format::pem);
