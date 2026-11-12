@@ -71,9 +71,14 @@ int main(int argc, char* argv[]) {
         std::string log_level_str = vm["log-level"].as<std::string>();
 
         // --- 2. Настройка асинхронного логгера ---
-        // Очередь на 8192 сообщения обслуживается одним фоновым потоком.
+        // Очередь на 8192 сообщений обслуживается одним фоновым потоком.
+        // Политика overrun_oldest (create_async_nb): при переполнении очереди
+        // теряются самые старые сообщения, но сетевые потоки io_context не
+        // блокируются на drain очереди — иначе паузы логгера попадали бы
+        // в измеряемые задержки сессий на том же потоке. Файл сбрасывается
+        // на диск при warn и выше, чтобы терялись в худшем случае debug/info.
         spdlog::init_thread_pool(8192, 1);
-        auto logger = spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+        auto logger = spdlog::create_async_nb<spdlog::sinks::basic_file_sink_mt>(
             "server", log_file, true);
 
         // Цветной вывод в консоль (для удобства отладки при запуске)
@@ -93,9 +98,10 @@ int main(int argc, char* argv[]) {
             logger->warn("Unknown log level '{}', using default 'info'", log_level_str);
         }
 
-        if (logger->level() <= spdlog::level::debug) {
-            logger->flush_on(spdlog::level::debug);
-        }
+        // Сброс файла на диск только при warn и выше: flush на каждое debug-сообщение
+        // тормозит фоновый поток логгера, чаще переполняет очередь и вынуждает её
+        // терять сообщения; warn+ критичны для диагностики и сбрасываются сразу.
+        logger->flush_on(spdlog::level::warn);
 
         logger->info("Logger initialized. Level: {}", log_level_str);
 

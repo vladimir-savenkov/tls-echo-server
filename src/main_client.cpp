@@ -85,8 +85,13 @@ int main(int argc, char* argv[]) {
         std::string log_level_str = vm["log-level"].as<std::string>();
 
         // --- 2. Настройка Логгера ---
+        // Политика overrun_oldest (create_async_nb): при переполнении очереди
+        // теряются самые старые сообщения, но сетевые потоки io_context не
+        // блокируются на drain очереди — иначе паузы логгера попадали бы
+        // в измеряемые задержки соединений на том же потоке. Файл сбрасывается
+        // на диск при warn и выше, чтобы терялись в худшем случае debug/info.
         spdlog::init_thread_pool(8192, 1);
-        auto logger = spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+        auto logger = spdlog::create_async_nb<spdlog::sinks::basic_file_sink_mt>(
             "client", log_file, true);
         auto colored_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         logger->sinks().push_back(colored_sink);
@@ -99,9 +104,10 @@ int main(int argc, char* argv[]) {
         else if (log_level_str == "error") logger->set_level(spdlog::level::err);
         else if (log_level_str == "critical") logger->set_level(spdlog::level::critical);
 
-        if (logger->level() <= spdlog::level::debug) {
-            logger->flush_on(spdlog::level::debug);
-        }
+        // Сброс файла на диск только при warn и выше: flush на каждое debug-сообщение
+        // тормозит фоновый поток логгера, чаще переполняет очередь и вынуждает её
+        // терять сообщения; warn+ критичны для диагностики и сбрасываются сразу.
+        logger->flush_on(spdlog::level::warn);
 
         logger->info("Starting {} clients with {} worker threads, {} packets each; target {}:{}",
                      client_count, thread_count, packet_count, host, port);
