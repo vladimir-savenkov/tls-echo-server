@@ -116,7 +116,7 @@ int main(int argc, char* argv[]) {
             }
             ssl_contexts.push_back(std::move(context));
         }
-        if (vm.count("insecure")) logger->warn("Проверка TLS-сертификата отключена (--insecure)");
+        if (vm.count("insecure")) logger->warn("TLS certificate verification is disabled (--insecure)");
 
         // Храним клиентов до завершения всех операций, включая отменённые.
         std::vector<std::unique_ptr<TlsClient>> clients;
@@ -164,13 +164,13 @@ int main(int argc, char* argv[]) {
                      completed_clients, client_count, packets_received, expected, elapsed.count());
         const double seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - started_at).count();
-        logger->info("Производительность: {:.2f} пакетов/с; {:.2f} MiB/с (эхо, полезные данные)",
+        logger->info("Throughput: {:.2f} packets/s; {:.2f} MiB/s (echo, useful payload)",
                      static_cast<double>(packets_received) / seconds,
                      static_cast<double>(bytes_received) / (1024 * 1024) / seconds);
-        logger->info("Задержка запросов, мкс (верхние границы): p50={:.2f}, p95={:.2f}, p99={:.2f}",
+        logger->info("Request latency, us (upper bounds): p50={:.2f}, p95={:.2f}, p99={:.2f}",
                      request_latency.percentile(0.50), request_latency.percentile(0.95),
                      request_latency.percentile(0.99));
-        logger->info("DNS + TCP + TLS, мкс (верхние границы): p50={:.2f}, p95={:.2f}, p99={:.2f}",
+        logger->info("DNS + TCP + TLS, us (upper bounds): p50={:.2f}, p95={:.2f}, p99={:.2f}",
                      setup_latency.percentile(0.50), setup_latency.percentile(0.95),
                      setup_latency.percentile(0.99));
         return completed_clients == client_count ? 0 : 1;

@@ -160,9 +160,9 @@ int main(int argc, char* argv[]) {
         signal_thread.join();
 
         const auto stats = server.stats();
-        logger->info("Сервер остановлен: принято={}, отклонено={}, ошибки accept={}, "
-                     "таймауты={}, превышение размера={}, эхо-пакетов={}, эхо-байт={}, "
-                     "активно={}", stats.accepted, stats.rejected, stats.accept_errors,
+        logger->info("Server stopped: accepted={}, rejected={}, accept errors={}, "
+                     "timed out={}, oversized={}, packets echoed={}, bytes echoed={}, "
+                     "active={}", stats.accepted, stats.rejected, stats.accept_errors,
                      stats.timed_out, stats.oversized, stats.packets_echoed,
                      stats.bytes_echoed, stats.active);
 
