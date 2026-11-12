@@ -35,6 +35,7 @@ int main(int argc, char* argv[]) {
             ("timeout-ms", po::value<int>()->default_value(10000), "deadline per network operation, milliseconds")
             ("shutdown-timeout-ms", po::value<int>()->default_value(5000), "active session drain deadline, milliseconds")
             ("log-file,l", po::value<std::string>()->default_value("server.log"), "path to log file")
+            ("log-append", "append to the log file instead of truncating it on start")
             ("log-level", po::value<std::string>()->default_value("info"), "log level (trace, debug, info, warn, error, critical)");
 
         po::variables_map vm;
@@ -70,6 +71,7 @@ int main(int argc, char* argv[]) {
         server_options.operation_timeout = std::chrono::milliseconds(timeout_ms);
         server_options.shutdown_timeout = std::chrono::milliseconds(shutdown_ms);
         std::string log_file = vm["log-file"].as<std::string>();
+        const bool log_append = vm.count("log-append") > 0;
         std::string log_level_str = vm["log-level"].as<std::string>();
 
         // --- 2. Настройка асинхронного логгера ---
@@ -80,8 +82,11 @@ int main(int argc, char* argv[]) {
         // в измеряемые задержки сессий на том же потоке. Файл сбрасывается
         // на диск при warn и выше, чтобы терялись в худшем случае debug/info.
         spdlog::init_thread_pool(8192, 1);
+        // Без --log-append файл усекается при каждом запуске: truncate удобен
+        // для одиночных прогонов; --log-append сохраняет историю
+        // между перезапусками службы.
         auto logger = spdlog::create_async_nb<spdlog::sinks::basic_file_sink_mt>(
-            "server", log_file, true);
+            "server", log_file, !log_append);
 
         // Цветной вывод в консоль (для удобства отладки при запуске)
         auto colored_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -123,16 +128,19 @@ int main(int argc, char* argv[]) {
 
         // --- 4. Создание Сервера ---
         TlsServer server(io_context, ssl_context, port, logger, server_options);
-        boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
-        // Первый сигнал запускает мягкий drain (до --shutdown-timeout-ms),
-        // повторный — немедленное закрытие сессий, без ожидания. Обработчик
-        // реармится после каждого сигнала, пока не началась остановка.
-        // Счётчик атомарный: обработчики async_wait могут выполняться
-        // параллельно на разных потоках io_context — реарм происходит до
-        // завершения предыдущего обработчика, и инкремент без атомарности
-        // был бы гонкой. fetch_add возвращает прежнее значение, различая
-        // первый и повторный сигналы; порядок stop/force на control_strand
-        // безопасен в любом порядке благодаря guard stopping_.
+        // Сигналы слушает выделенный io_context в собственном потоке: висящий
+        // async_wait не должен держать сетевой io_context, иначе после drain
+        // процесс не смог бы завершиться сам. Первый сигнал запускает мягкий
+        // drain (до --shutdown-timeout-ms), повторный — force_stop без
+        // ожидания. Обработчик реармится в graceful-ветке, чтобы повторный
+        // сигнал во время drain был пойман. stop/force_stop диспетчеризуются
+        // на control_strand сервера и безопасны из сигнального потока.
+        // Счётчик атомарный — страховка на случай добавления потоков к
+        // сигнальному io_context; fetch_add различает первый и повторный
+        // сигналы, а порядок stop/force на strand безопасен благодаря
+        // guard stopping_.
+        boost::asio::io_context signal_io;
+        boost::asio::signal_set signals(signal_io, SIGINT, SIGTERM);
         const auto signal_count = std::make_shared<std::atomic<int>>(0);
         std::function<void(const boost::system::error_code&, int)> on_signal;
         on_signal = [&server, &signals, signal_count, logger, &on_signal](
@@ -149,6 +157,7 @@ int main(int argc, char* argv[]) {
             signals.async_wait(on_signal);
         };
         signals.async_wait(on_signal);
+        std::thread signal_thread([&signal_io] { signal_io.run(); });
 
         // --- 5. Пул потоков ---
         std::vector<std::thread> threads;
@@ -167,6 +176,11 @@ int main(int argc, char* argv[]) {
         for (auto& t : threads) {
             t.join();
         }
+
+        // Сетевой io_context опустел — drain завершён. Сигнальный поток
+        // держит только async_wait: останавливаем его и ждём.
+        signal_io.stop();
+        signal_thread.join();
 
         const auto stats = server.stats();
         logger->info("Сервер остановлен: принято={}, отклонено={}, ошибки accept={}, "
