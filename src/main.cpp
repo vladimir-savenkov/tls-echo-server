@@ -13,10 +13,7 @@
 #include <thread>
 #include <chrono>
 #include "server.h"
-#include "spdlog/async.h"
-#include "spdlog/spdlog.h"
-#include "spdlog/sinks/basic_file_sink.h"
-#include "spdlog/sinks/stdout_color_sinks.h"
+#include "logger.h"
 
 namespace po = boost::program_options;
 
@@ -64,7 +61,8 @@ int main(int argc, char* argv[]) {
         const int shutdown_ms = vm["shutdown-timeout-ms"].as<int>();
         if (max_connections <= 0 || max_payload < 0 || max_payload > 65535 ||
             timeout_ms <= 0 || shutdown_ms <= 0) {
-            std::cerr << "Ошибка аргументов: неверный лимит соединений, пакета или таймаут\n";
+            std::cerr << "Argument parsing error: --max-connections, --max-payload, "
+                         "--timeout-ms or --shutdown-timeout-ms is out of range\n";
             return 1;
         }
         ServerOptions server_options;
@@ -84,40 +82,10 @@ int main(int argc, char* argv[]) {
         std::string log_level_str = vm["log-level"].as<std::string>();
 
         // --- 2. Настройка асинхронного логгера ---
-        // Очередь на 8192 сообщений обслуживается одним фоновым потоком.
-        // Политика overrun_oldest (create_async_nb): при переполнении очереди
-        // теряются самые старые сообщения, но сетевые потоки io_context не
-        // блокируются на drain очереди — иначе паузы логгера попадали бы
-        // в измеряемые задержки сессий на том же потоке. Файл сбрасывается
-        // на диск при warn и выше, чтобы терялись в худшем случае debug/info.
-        spdlog::init_thread_pool(8192, 1);
-        // Без --log-append файл усекается при каждом запуске: truncate удобен
-        // для одиночных прогонов; --log-append сохраняет историю
-        // между перезапусками службы.
-        auto logger = spdlog::create_async_nb<spdlog::sinks::basic_file_sink_mt>(
-            "server", log_file, !log_append);
-
-        // Цветной вывод в консоль (для удобства отладки при запуске)
-        auto colored_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        logger->sinks().push_back(colored_sink);
-
-        logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
-
-        // Установка уровня логирования
-        if (log_level_str == "trace") logger->set_level(spdlog::level::trace);
-        else if (log_level_str == "debug") logger->set_level(spdlog::level::debug);
-        else if (log_level_str == "info") logger->set_level(spdlog::level::info);
-        else if (log_level_str == "warn") logger->set_level(spdlog::level::warn);
-        else if (log_level_str == "error") logger->set_level(spdlog::level::err);
-        else if (log_level_str == "critical") logger->set_level(spdlog::level::critical);
-        else {
-            logger->warn("Unknown log level '{}', using default 'info'", log_level_str);
-        }
-
-        // Сброс файла на диск только при warn и выше: flush на каждое debug-сообщение
-        // тормозит фоновый поток логгера, чаще переполняет очередь и вынуждает её
-        // терять сообщения; warn+ критичны для диагностики и сбрасываются сразу.
-        logger->flush_on(spdlog::level::warn);
+        // Общая политика (очередь overrun_oldest, flush на warn) — в logger.h;
+        // --log-append дописывает журнал, без флага файл усекается.
+        auto logger = make_logger("server", log_file, log_append);
+        logger->set_level(log_level_from_string(log_level_str, *logger));
 
         logger->info("Logger initialized. Level: {}", log_level_str);
 
@@ -192,9 +160,9 @@ int main(int argc, char* argv[]) {
         signal_thread.join();
 
         const auto stats = server.stats();
-        logger->info("Сервер остановлен: принято={}, отклонено={}, ошибки accept={}, "
-                     "таймауты={}, превышение размера={}, эхо-пакетов={}, эхо-байт={}, "
-                     "активно={}", stats.accepted, stats.rejected, stats.accept_errors,
+        logger->info("Server stopped: accepted={}, rejected={}, accept errors={}, "
+                     "timed out={}, oversized={}, packets echoed={}, bytes echoed={}, "
+                     "active={}", stats.accepted, stats.rejected, stats.accept_errors,
                      stats.timed_out, stats.oversized, stats.packets_echoed,
                      stats.bytes_echoed, stats.active);
 

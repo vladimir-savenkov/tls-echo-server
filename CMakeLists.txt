@@ -3,6 +3,8 @@ project(tls_echo_server VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# compile_commands.json для clangd/clang-tidy (см. пункт CI про статический анализ)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Выявляем устаревшие API Asio, удалённые в новых версиях Boost.
 add_compile_definitions(BOOST_ASIO_NO_DEPRECATED)
 if(WIN32)
@@ -33,39 +35,38 @@ find_package(Threads REQUIRED)
 add_library(protocol src/protocol.cpp)
 target_include_directories(protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# Исходники
-add_executable(server
-    src/main.cpp
+# Сетевое ядро: сервер и клиент в одной статической библиотеке, чтобы
+# боевые бинарники и сквозной тест линковались с одним и тем же кодом
+# (без дублирования списков исходников) и инкрементальная сборка не
+# перекомпилировала исходники в каждой цели.
+add_library(tls_core STATIC
     src/server.cpp
-)
-
-target_link_libraries(server PRIVATE
-    Boost::system
-    Boost::thread
-    Boost::program_options
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    spdlog::spdlog
-    protocol
-    Threads::Threads
-)
-
-
-# Цель для клиента
-add_executable(client
-    src/main_client.cpp
     src/client.cpp
 )
-
-target_link_libraries(client PRIVATE
+target_link_libraries(tls_core PUBLIC
     Boost::system
-    Boost::thread
-    Boost::program_options
     OpenSSL::SSL
     OpenSSL::Crypto
     spdlog::spdlog
     protocol
     Threads::Threads
+)
+target_include_directories(tls_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# Сервер
+add_executable(server src/main.cpp)
+target_link_libraries(server PRIVATE
+    tls_core
+    Boost::thread
+    Boost::program_options
+)
+
+# Клиент
+add_executable(client src/main_client.cpp)
+target_link_libraries(client PRIVATE
+    tls_core
+    Boost::thread
+    Boost::program_options
 )
 
 enable_testing()
@@ -91,19 +92,8 @@ target_include_directories(test_log_payload PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/
 add_test(NAME log_payload_tests COMMAND test_log_payload)
 
 # Сквозной тест: реальный TlsServer и TlsClient через TLS на loopback
-add_executable(test_tls_end_to_end
-    tests/test_tls_end_to_end.cpp
-    src/server.cpp
-    src/client.cpp
-)
-target_link_libraries(test_tls_end_to_end PRIVATE
-    Boost::system
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    spdlog::spdlog
-    protocol
-    Threads::Threads
-)
+add_executable(test_tls_end_to_end tests/test_tls_end_to_end.cpp)
+target_link_libraries(test_tls_end_to_end PRIVATE tls_core)
 add_test(NAME tls_end_to_end_tests COMMAND test_tls_end_to_end)
 set_tests_properties(tls_end_to_end_tests PROPERTIES TIMEOUT 30)
 

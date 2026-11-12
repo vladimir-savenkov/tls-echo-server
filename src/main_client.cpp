@@ -11,10 +11,7 @@
 #include <thread>
 #include <vector>
 #include "client.h"
-#include "spdlog/async.h"
-#include "spdlog/spdlog.h"
-#include "spdlog/sinks/basic_file_sink.h"
-#include "spdlog/sinks/stdout_color_sinks.h"
+#include "logger.h"
 
 namespace po = boost::program_options;
 
@@ -72,8 +69,9 @@ int main(int argc, char* argv[]) {
                                          vm["payload-size"].as<int>() > 65535)) ||
             (vm.count("insecure") && vm.count("cert")) ||
             (duration > 0 && !vm["packets"].defaulted())) {
-            std::cerr << "Ошибка аргументов: проверьте таймаут, размер, длительность; "
-                         "--cert/--insecure и --duration/--packets несовместимы\n";
+            std::cerr << "Argument parsing error: check --timeout-ms, --payload-size, "
+                         "--duration; --cert/--insecure and --duration/--packets "
+                         "are mutually exclusive\n";
             return 1;
         }
         TlsClientOptions client_options;
@@ -87,31 +85,10 @@ int main(int argc, char* argv[]) {
         std::string log_level_str = vm["log-level"].as<std::string>();
 
         // --- 2. Настройка Логгера ---
-        // Политика overrun_oldest (create_async_nb): при переполнении очереди
-        // теряются самые старые сообщения, но сетевые потоки io_context не
-        // блокируются на drain очереди — иначе паузы логгера попадали бы
-        // в измеряемые задержки соединений на том же потоке. Файл сбрасывается
-        // на диск при warn и выше, чтобы терялись в худшем случае debug/info.
-        spdlog::init_thread_pool(8192, 1);
-        // Без --log-append файл усекается при каждом запуске; --log-append
-        // сохраняет историю между перезапусками.
-        auto logger = spdlog::create_async_nb<spdlog::sinks::basic_file_sink_mt>(
-            "client", log_file, !log_append);
-        auto colored_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        logger->sinks().push_back(colored_sink);
-        logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
-
-        if (log_level_str == "trace") logger->set_level(spdlog::level::trace);
-        else if (log_level_str == "debug") logger->set_level(spdlog::level::debug);
-        else if (log_level_str == "info") logger->set_level(spdlog::level::info);
-        else if (log_level_str == "warn") logger->set_level(spdlog::level::warn);
-        else if (log_level_str == "error") logger->set_level(spdlog::level::err);
-        else if (log_level_str == "critical") logger->set_level(spdlog::level::critical);
-
-        // Сброс файла на диск только при warn и выше: flush на каждое debug-сообщение
-        // тормозит фоновый поток логгера, чаще переполняет очередь и вынуждает её
-        // терять сообщения; warn+ критичны для диагностики и сбрасываются сразу.
-        logger->flush_on(spdlog::level::warn);
+        // Общая политика (очередь overrun_oldest, flush на warn) — в logger.h;
+        // --log-append дописывает журнал, без флага файл усекается.
+        auto logger = make_logger("client", log_file, log_append);
+        logger->set_level(log_level_from_string(log_level_str, *logger));
 
         logger->info("Starting {} clients with {} worker threads, {} packets each; target {}:{}",
                      client_count, thread_count, packet_count, host, port);
@@ -139,7 +116,7 @@ int main(int argc, char* argv[]) {
             }
             ssl_contexts.push_back(std::move(context));
         }
-        if (vm.count("insecure")) logger->warn("Проверка TLS-сертификата отключена (--insecure)");
+        if (vm.count("insecure")) logger->warn("TLS certificate verification is disabled (--insecure)");
 
         // Храним клиентов до завершения всех операций, включая отменённые.
         std::vector<std::unique_ptr<TlsClient>> clients;
@@ -187,13 +164,13 @@ int main(int argc, char* argv[]) {
                      completed_clients, client_count, packets_received, expected, elapsed.count());
         const double seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - started_at).count();
-        logger->info("Производительность: {:.2f} пакетов/с; {:.2f} MiB/с (эхо, полезные данные)",
+        logger->info("Throughput: {:.2f} packets/s; {:.2f} MiB/s (echo, useful payload)",
                      static_cast<double>(packets_received) / seconds,
                      static_cast<double>(bytes_received) / (1024 * 1024) / seconds);
-        logger->info("Задержка запросов, мкс (верхние границы): p50={:.2f}, p95={:.2f}, p99={:.2f}",
+        logger->info("Request latency, us (upper bounds): p50={:.2f}, p95={:.2f}, p99={:.2f}",
                      request_latency.percentile(0.50), request_latency.percentile(0.95),
                      request_latency.percentile(0.99));
-        logger->info("DNS + TCP + TLS, мкс (верхние границы): p50={:.2f}, p95={:.2f}, p99={:.2f}",
+        logger->info("DNS + TCP + TLS, us (upper bounds): p50={:.2f}, p95={:.2f}, p99={:.2f}",
                      setup_latency.percentile(0.50), setup_latency.percentile(0.95),
                      setup_latency.percentile(0.99));
         return completed_clients == client_count ? 0 : 1;
