@@ -38,7 +38,12 @@ public:
                       std::shared_ptr<spdlog::logger> logger, ServerOptions options = {});
     ~TlsServer();
     void run();
+    // Мягкая остановка: акцептор закрывается, активным сессиям даётся
+    // options.shutdown_timeout на завершение, затем их сокеты закрываются.
     void stop();
+    // Принудительная остановка: акцептор и сокеты всех сессий закрываются
+    // немедленно, без ожидания drain. Повторный вызов stop() игнорируется.
+    void force_stop();
     unsigned short port() const { return port_; }
     ServerStats stats() const;
 

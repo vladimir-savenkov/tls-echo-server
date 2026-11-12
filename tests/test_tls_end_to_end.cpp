@@ -487,6 +487,53 @@ void test_concurrent_tls_and_shutdown() {
           "server counts concurrent echoed bytes for boundary payloads");
 }
 
+// Повторный сигнал остановки: первый stop() даёт сессиям время до
+// shutdown_timeout, второй (force_stop) закрывает их немедленно, не
+// дожидаясь таймаута. Idle-пир устанавливает TLS и висит в чтении,
+// поэтому серверная сессия живёт ровно до закрытия сокета.
+void test_force_stop_closes_sessions_immediately() {
+    const auto pem = make_self_signed_pem();
+    auto logger = make_quiet_debug_logger();
+    boost::asio::io_context io;
+    auto server_ctx = make_server_context(pem);
+    ServerOptions options;
+    options.shutdown_timeout = std::chrono::seconds(10);
+    TlsServer server(io, server_ctx, 0, logger, options);
+    auto client_ctx = make_client_context();
+
+    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> idle(io, client_ctx);
+    idle.next_layer().connect({boost::asio::ip::address_v4::loopback(), server.port()});
+    bool handshake_done = false;
+    idle.async_handshake(boost::asio::ssl::stream_base::client,
+                         [&](boost::system::error_code error) {
+                             handshake_done = !error;
+                         });
+    check(wait_for(io, [&] { return handshake_done; }, std::chrono::seconds(5)),
+          "idle peer completes TLS handshake");
+    check(server.stats().accepted == 1, "idle session is accepted before stop");
+    // Висящее чтение: увидит закрытие сервера в момент force_stop.
+    bool seen_close = false;
+    char dummy[10];
+    boost::asio::async_read(idle, boost::asio::buffer(dummy),
+                            [&](boost::system::error_code error, std::size_t) {
+                                seen_close = static_cast<bool>(error);
+                            });
+
+    server.stop();
+    io.poll();
+    check(server.stats().active == 1,
+          "idle session survives first stop within the drain period");
+
+    server.force_stop();
+    check(wait_for(io, [&] { return server.stats().active == 0; },
+                   std::chrono::seconds(3)),
+          "force_stop closes sessions without waiting for the drain");
+    check(wait_for(io, [&] { return seen_close; }, std::chrono::seconds(3)),
+          "idle peer sees its connection closed by force_stop");
+    boost::system::error_code ignored;
+    idle.next_layer().close(ignored);
+}
+
 #if defined(__linux__)
 // Backoff в цикле accept: при исчерпании fd (EMFILE) сервер обязан
 // повторять accept с паузой, а не крутиться в busy-loop, и продолжать
@@ -564,6 +611,7 @@ int main() {
     test_concurrent_tls_and_shutdown();
     test_shutdown_with_busy_and_idle_sessions();
     test_transport_write_deadline();
+    test_force_stop_closes_sessions_immediately();
 #if defined(__linux__)
     test_accept_error_backoff();
 #endif

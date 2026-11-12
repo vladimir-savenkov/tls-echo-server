@@ -69,6 +69,19 @@ void TlsServer::stop() {
     });
 }
 
+void TlsServer::force_stop() {
+    boost::asio::dispatch(control_strand_, [this] {
+        // Отменяем таймер drain: его обработчик больше не нужен, закрываем всё сами.
+        drain_timer_.cancel();
+        stopping_ = true;
+        boost::system::error_code ignored;
+        acceptor_.close(ignored);
+        logger_->warn("Forcing server stop; closing {} active session(s)", sessions_.size());
+        // Закрываем сокеты и обрабатываем отменённые операции до выхода io.run().
+        for (const auto& entry : sessions_) entry.second->cancel();
+    });
+}
+
 void TlsServer::session_finished(uint64_t id, bool timed_out, bool oversized) {
     boost::asio::post(control_strand_, [this, id, timed_out, oversized] {
         sessions_.erase(id);

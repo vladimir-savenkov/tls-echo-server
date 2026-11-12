@@ -3,7 +3,9 @@
 #include <boost/program_options.hpp>
 #include <boost/thread.hpp>
 #include <openssl/ssl.h>
+#include <atomic>
 #include <csignal>
+#include <functional>
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -122,12 +124,31 @@ int main(int argc, char* argv[]) {
         // --- 4. Создание Сервера ---
         TlsServer server(io_context, ssl_context, port, logger, server_options);
         boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
-        signals.async_wait([&server, logger](const boost::system::error_code& error, int signal) {
-            if (!error) {
-                logger->info("Received signal {}; starting shutdown", signal);
+        // Первый сигнал запускает мягкий drain (до --shutdown-timeout-ms),
+        // повторный — немедленное закрытие сессий, без ожидания. Обработчик
+        // реармится после каждого сигнала, пока не началась остановка.
+        // Счётчик атомарный: обработчики async_wait могут выполняться
+        // параллельно на разных потоках io_context — реарм происходит до
+        // завершения предыдущего обработчика, и инкремент без атомарности
+        // был бы гонкой. fetch_add возвращает прежнее значение, различая
+        // первый и повторный сигналы; порядок stop/force на control_strand
+        // безопасен в любом порядке благодаря guard stopping_.
+        const auto signal_count = std::make_shared<std::atomic<int>>(0);
+        std::function<void(const boost::system::error_code&, int)> on_signal;
+        on_signal = [&server, &signals, signal_count, logger, &on_signal](
+                        const boost::system::error_code& error, int signal) {
+            if (error) return;
+            if (signal_count->fetch_add(1) == 0) {
+                logger->info("Received signal {}; starting graceful shutdown", signal);
                 server.stop();
+            } else {
+                logger->warn("Received signal {} again; forcing immediate stop", signal);
+                server.force_stop();
+                return;  // больше не реармимся: остановка уже принудительная
             }
-        });
+            signals.async_wait(on_signal);
+        };
+        signals.async_wait(on_signal);
 
         // --- 5. Пул потоков ---
         std::vector<std::thread> threads;
