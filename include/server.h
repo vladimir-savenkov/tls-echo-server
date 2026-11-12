@@ -25,6 +25,8 @@ struct ServerStats {
     uint64_t accept_errors = 0;
     uint64_t timed_out = 0;
     uint64_t oversized = 0;
+    uint64_t packets_echoed = 0;
+    uint64_t bytes_echoed = 0;
     uint64_t active = 0;
 };
 
@@ -58,7 +60,7 @@ private:
     std::size_t consecutive_accept_errors_ = 0;
     bool stopping_ = false;
     std::atomic<uint64_t> accepted_{0}, rejected_{0}, accept_errors_{0}, timed_out_{0},
-        oversized_{0}, active_{0};
+        oversized_{0}, packets_echoed_{0}, bytes_echoed_{0}, active_{0};
 
     void do_accept();
     void session_finished(uint64_t id, bool timed_out, bool oversized);
@@ -68,6 +70,7 @@ private:
         Session(boost::asio::io_context& io, boost::asio::ip::tcp::socket socket,
                 boost::asio::ssl::context& ssl, std::shared_ptr<spdlog::logger> logger,
                 ServerOptions options, uint64_t session_id,
+                std::atomic<uint64_t>* echoed_packets, std::atomic<uint64_t>* echoed_bytes,
                 std::function<void(bool, bool)> on_finished);
         void start();
         void cancel();
@@ -86,6 +89,10 @@ private:
         std::shared_ptr<spdlog::logger> logger_;
         ServerOptions options_;
         uint64_t session_id_ = 0;
+        // Счётчики эхо-пакетов сервера: сессия инкрементирует их после
+        // успешного полного завершения записи ответа.
+        std::atomic<uint64_t>* echoed_packets_ = nullptr;
+        std::atomic<uint64_t>* echoed_bytes_ = nullptr;
         std::function<void(bool, bool)> on_finished_;
         // Адрес удалённой стороны фиксируется один раз при создании: позже сокет
         // может закрыться, и endpoint будет недоступен для логов.
