@@ -35,6 +35,7 @@ int main(int argc, char* argv[]) {
             ("duration", po::value<int>()->default_value(0), "run each connection for this many seconds instead of packet count")
             ("threads,t", po::value<int>()->default_value(1), "number of I/O worker threads (positive)")
             ("log-file,l", po::value<std::string>()->default_value("client.log"), "log file path")
+            ("log-append", "append to the log file instead of truncating it on start")
             ("log-level", po::value<std::string>()->default_value("info"), "log level");
 
         po::variables_map vm;
@@ -82,6 +83,7 @@ int main(int argc, char* argv[]) {
             client_options.run.payload_size = static_cast<std::size_t>(vm["payload-size"].as<int>());
         }
         std::string log_file = vm["log-file"].as<std::string>();
+        const bool log_append = vm.count("log-append") > 0;
         std::string log_level_str = vm["log-level"].as<std::string>();
 
         // --- 2. Настройка Логгера ---
@@ -91,8 +93,10 @@ int main(int argc, char* argv[]) {
         // в измеряемые задержки соединений на том же потоке. Файл сбрасывается
         // на диск при warn и выше, чтобы терялись в худшем случае debug/info.
         spdlog::init_thread_pool(8192, 1);
+        // Без --log-append файл усекается при каждом запуске; --log-append
+        // сохраняет историю между перезапусками.
         auto logger = spdlog::create_async_nb<spdlog::sinks::basic_file_sink_mt>(
-            "client", log_file, true);
+            "client", log_file, !log_append);
         auto colored_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         logger->sinks().push_back(colored_sink);
         logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
