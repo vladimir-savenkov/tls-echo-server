@@ -29,10 +29,25 @@ TlsServer::TlsServer(boost::asio::io_context& io_context,
         options_.operation_timeout.count() <= 0 || options_.shutdown_timeout.count() <= 0) {
         throw std::invalid_argument("Invalid server limits or timeouts");
     }
-    acceptor_.open(boost::asio::ip::tcp::v4());
-    acceptor_.set_option(boost::asio::socket_base::reuse_address(true));
-    acceptor_.bind({boost::asio::ip::tcp::v4(), port});
-    acceptor_.listen();
+    // Семейство сокета определяется адресом привязки; по умолчанию это IPv4
+    // 0.0.0.0 — прежнее поведение. IPv6-адрес включает dual-stack: один
+    // сокет принимает соединения обоих семейств.
+    const auto protocol = options_.bind_address.is_v6() ? boost::asio::ip::tcp::v6()
+                                                        : boost::asio::ip::tcp::v4();
+    try {
+        acceptor_.open(protocol);
+        if (options_.bind_address.is_v6()) {
+            acceptor_.set_option(boost::asio::ip::v6_only(false));
+        }
+        acceptor_.set_option(boost::asio::socket_base::reuse_address(true));
+        acceptor_.bind({options_.bind_address, port});
+        acceptor_.listen();
+    } catch (const boost::system::system_error& error) {
+        // Недоступный на хосте адрес привязки — ошибка конфигурации, а не
+        // откат на другой адрес: пользователь должен увидеть точную причину.
+        throw std::runtime_error("cannot bind " + options_.bind_address.to_string() +
+                                 ": " + error.code().message());
+    }
     port_ = acceptor_.local_endpoint().port();
     logger_->info("Server starting on port {}", port_);
     do_accept();

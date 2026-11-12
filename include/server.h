@@ -17,6 +17,10 @@ struct ServerOptions {
     std::size_t max_payload = 65535;
     std::chrono::milliseconds operation_timeout{10000};
     std::chrono::milliseconds shutdown_timeout{5000};
+    // Адрес привязки задаёт семейство сокета: IPv4 (по умолчанию 0.0.0.0 —
+    // все интерфейсы) или IPv6. IPv6-адрес открывает dual-stack: один сокет
+    // принимает соединения обоих семейств (v6_only = false).
+    boost::asio::ip::address bind_address{boost::asio::ip::address_v4::any()};
 };
 
 struct ServerStats {

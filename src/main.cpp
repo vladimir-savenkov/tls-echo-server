@@ -27,6 +27,8 @@ int main(int argc, char* argv[]) {
         desc.add_options()
             ("help", "produce help message")
             ("port,p", po::value<unsigned short>()->default_value(8443), "port to listen on")
+            ("bind,b", po::value<std::string>()->default_value("0.0.0.0"),
+             "address to listen on: IPv4 or IPv6 (IPv6 enables dual-stack)")
             ("cert,c", po::value<std::string>()->required(), "server certificate path (required)")
             ("key,k", po::value<std::string>()->required(), "server private key path (required)")
             ("threads,t", po::value<int>()->default_value(4), "number of worker threads")
@@ -70,6 +72,13 @@ int main(int argc, char* argv[]) {
         server_options.max_payload = static_cast<std::size_t>(max_payload);
         server_options.operation_timeout = std::chrono::milliseconds(timeout_ms);
         server_options.shutdown_timeout = std::chrono::milliseconds(shutdown_ms);
+        boost::system::error_code bind_error;
+        server_options.bind_address =
+            boost::asio::ip::make_address(vm["bind"].as<std::string>(), bind_error);
+        if (bind_error) {
+            std::cerr << "Argument parsing error: --bind must be an IPv4 or IPv6 address\n";
+            return 1;
+        }
         std::string log_file = vm["log-file"].as<std::string>();
         const bool log_append = vm.count("log-append") > 0;
         std::string log_level_str = vm["log-level"].as<std::string>();

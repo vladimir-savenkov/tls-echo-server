@@ -532,6 +532,56 @@ void test_force_stop_closes_sessions_immediately() {
     idle.next_layer().close(ignored);
 }
 
+// Привязка адреса: по умолчанию IPv4 0.0.0.0 (прежнее поведение);
+// IPv6-адрес открывает dual-stack — один сокет принимает соединения обоих
+// семейств; адрес, недоступный на хосте, — ошибка конфигурации, а не
+// молчаливый откат. Как и остальные кейсы, каждый блок использует отдельный
+// io_context: после полной остановки сервера переиспользование того же
+// io_context новым сервером в тестах не поддерживается.
+void test_bind_addresses() {
+    const auto pem = make_self_signed_pem();
+    auto logger = make_quiet_debug_logger();
+    auto server_ctx = make_server_context(pem);
+    auto client_ctx = make_client_context();
+
+    {
+        boost::asio::io_context io;
+        TlsServer server(io, server_ctx, 0, logger);  // по умолчанию 0.0.0.0
+        TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1);
+        client.start(2);
+        check(wait_for(io, [&] { return client.succeeded(); }, std::chrono::seconds(5)),
+              "default bind serves IPv4 loopback");
+        stop_and_drain(io, server);
+    }
+
+    {
+        boost::asio::io_context io;
+        ServerOptions options;
+        options.bind_address = boost::asio::ip::address_v6::any();
+        TlsServer server(io, server_ctx, 0, logger, options);
+        TlsClient v6(io, client_ctx, "::1", server.port(), logger, 1);
+        TlsClient v4(io, client_ctx, "127.0.0.1", server.port(), logger, 2);
+        v6.start(2);
+        v4.start(2);
+        check(wait_for(io, [&] { return v6.succeeded() && v4.succeeded(); },
+                       std::chrono::seconds(5)),
+              "IPv6 bind is dual-stack: both ::1 and 127.0.0.1 connect");
+        stop_and_drain(io, server);
+    }
+
+    bool threw = false;
+    try {
+        boost::asio::io_context io;
+        ServerOptions options;
+        options.bind_address = boost::asio::ip::make_address("192.0.2.1");
+        TlsServer server(io, server_ctx, 0, logger, options);
+        static_cast<void>(server);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    check(threw, "binding an unavailable address fails");
+}
+
 #if defined(__linux__)
 // Backoff в цикле accept: при исчерпании fd (EMFILE) сервер обязан
 // повторять accept с паузой, а не крутиться в busy-loop, и продолжать
@@ -610,6 +660,8 @@ int main() {
     test_shutdown_with_busy_and_idle_sessions();
     test_transport_write_deadline();
     test_force_stop_closes_sessions_immediately();
+    test_bind_addresses();
+
 #if defined(__linux__)
     test_accept_error_backoff();
 #endif
