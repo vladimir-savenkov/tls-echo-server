@@ -143,9 +143,10 @@ int main(int argc, char* argv[]) {
 
         const auto stats = server.stats();
         logger->info("Сервер остановлен: принято={}, отклонено={}, ошибки accept={}, "
-                     "таймауты={}, превышение размера={}, активно={}", stats.accepted,
-                     stats.rejected, stats.accept_errors, stats.timed_out, stats.oversized,
-                     stats.active);
+                     "таймауты={}, превышение размера={}, эхо-пакетов={}, эхо-байт={}, "
+                     "активно={}", stats.accepted, stats.rejected, stats.accept_errors,
+                     stats.timed_out, stats.oversized, stats.packets_echoed,
+                     stats.bytes_echoed, stats.active);
 
     } catch (const po::error& e) {
         std::cerr << "Argument parsing error: " << e.what() << "\n";

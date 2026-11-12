@@ -163,6 +163,14 @@ void test_tls_echo_round_trip() {
           "TLS client completes the request/response sequence in time");
     check(client.packets_received() == 3, "client receives every echoed packet");
     check(client.failure_reason() == "none", "round trip reports no error");
+
+    // Перекрёстная сверка счётчиков: сервер обязан посчитать те же пакеты
+    // и те же полезные байты, что получил клиент.
+    const auto stats = server.stats();
+    check(stats.packets_echoed == client.packets_received(),
+          "server counts every echoed packet");
+    check(stats.bytes_echoed == client.bytes_received(),
+          "server counts echoed payload bytes");
 }
 
 void test_server_rejects_corrupted_payload() {
@@ -472,6 +480,11 @@ void test_concurrent_tls_and_shutdown() {
     }
     check(server.stats().active == 0 && server.stats().accepted == 16,
           "server drains concurrent sessions");
+    // 16 клиентов по 3 пакета; чётные клиенты — пустой payload, нечётные — 65535.
+    check(server.stats().packets_echoed == 48,
+          "server counts all concurrent echoed packets");
+    check(server.stats().bytes_echoed == 8 * 3 * 65535,
+          "server counts concurrent echoed bytes for boundary payloads");
 }
 
 #if defined(__linux__)

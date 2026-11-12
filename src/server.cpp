@@ -47,7 +47,8 @@ void TlsServer::run() { io_context_.run(); }
 
 ServerStats TlsServer::stats() const {
     return {accepted_.load(), rejected_.load(), accept_errors_.load(),
-            timed_out_.load(), oversized_.load(), active_.load()};
+            timed_out_.load(), oversized_.load(), packets_echoed_.load(),
+            bytes_echoed_.load(), active_.load()};
 }
 
 void TlsServer::stop() {
@@ -112,7 +113,8 @@ void TlsServer::do_accept() {
             } else {
                 const auto id = ++next_session_;
                 auto session = std::make_shared<Session>(io_context_, std::move(socket),
-                    ssl_context_, logger_, options_, id, [this, id](bool timeout, bool oversized) {
+                    ssl_context_, logger_, options_, id, &packets_echoed_, &bytes_echoed_,
+                    [this, id](bool timeout, bool oversized) {
                         session_finished(id, timeout, oversized);
                     });
                 sessions_.emplace(id, session);
@@ -128,10 +130,12 @@ TlsServer::Session::Session(boost::asio::io_context& io, boost::asio::ip::tcp::s
                            boost::asio::ssl::context& ssl,
                            std::shared_ptr<spdlog::logger> logger, ServerOptions options,
                            uint64_t session_id,
+                           std::atomic<uint64_t>* echoed_packets, std::atomic<uint64_t>* echoed_bytes,
                            std::function<void(bool, bool)> on_finished)
     : strand_(boost::asio::make_strand(io)), socket_(std::move(socket), ssl),
       deadline_(strand_), logger_(std::move(logger)), options_(options),
-      session_id_(session_id), on_finished_(std::move(on_finished)) {
+      session_id_(session_id), echoed_packets_(echoed_packets), echoed_bytes_(echoed_bytes),
+      on_finished_(std::move(on_finished)) {
     boost::system::error_code endpoint_error;
     const auto remote = socket_.lowest_layer().remote_endpoint(endpoint_error);
     if (!endpoint_error) remote_ = remote.address().to_string() + ":" + std::to_string(remote.port());
@@ -261,7 +265,13 @@ void TlsServer::Session::write_response() {
     boost::asio::async_write(socket_, response_buffers,
         boost::asio::bind_executor(strand_,
         [self = shared_from_this()](boost::system::error_code error, std::size_t) {
-            if (!self->failed(error)) self->read_header();
+            if (self->failed(error)) return;
+            // Ответ записан полностью: учитываем пакет и его полезные байты
+            // (заголовок не входит). Сессии живут на разных strand'ах, поэтому
+            // счётчики сервера атомарные — конкурентный ++ безопасен.
+            ++*self->echoed_packets_;
+            *self->echoed_bytes_ += self->expected_len_;
+            self->read_header();
         }));
 }
 
