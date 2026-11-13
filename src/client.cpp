@@ -15,7 +15,7 @@ std::function<void(const std::string&)> make_state_logger(
 
 TlsClient::TlsClient(boost::asio::io_context& io_context,
                      boost::asio::ssl::context& ssl_context,
-                     const std::string& host, unsigned short port,
+                     std::string host, unsigned short port,
                      std::shared_ptr<spdlog::logger> logger, int client_number,
                      TlsClientOptions options, CompletionHandler on_complete)
     : strand_(boost::asio::make_strand(io_context)), resolver_(io_context),
@@ -28,7 +28,7 @@ TlsClient::TlsClient(boost::asio::io_context& io_context,
           [this](ClientError error) {
               if (error != ClientError::none) finish(client_error_name(error));
           }, options.run),
-      logger_(std::move(logger)), host_(host), port_(port),
+      logger_(std::move(logger)), host_(std::move(host)), port_(port),
       client_number_(client_number), options_(options), on_complete_(std::move(on_complete)) {
     if (options_.timeout.count() <= 0) throw std::invalid_argument("Timeout must be positive");
     socket_.set_verify_callback(boost::asio::ssl::host_name_verification(host_));
@@ -66,7 +66,7 @@ void TlsClient::start(int packet_count) {
         resolver_.async_resolve(host_, std::to_string(port_),
             boost::asio::bind_executor(strand_,
             [this, packet_count](boost::system::error_code error,
-                                boost::asio::ip::tcp::resolver::results_type endpoints) {
+                                const boost::asio::ip::tcp::resolver::results_type& endpoints) {
                 if (stage_failed("resolve", error)) return;
                 arm("connect");
                 boost::asio::async_connect(socket_.lowest_layer(), endpoints,

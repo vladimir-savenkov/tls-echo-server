@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-enum class ClientError {
+enum class ClientError : std::uint8_t {
     none,
     already_started,
     write_failed,
@@ -171,7 +171,10 @@ private:
             });
     }
 
-    void read_payload(std::vector<char> header, std::size_t payload_size) {
+    // Линейная цепочка проверок ответа «заголовок → payload → сверка»;
+    // разбиение на помощники усложнит чтение последовательности — сложность
+    // осознанно принята.
+    void read_payload(std::vector<char> header, std::size_t payload_size) {  // NOLINT(readability-function-cognitive-complexity)
         if (state_callback_) {
             log_state("waiting for response payload: bytes=" + std::to_string(payload_size));
         }

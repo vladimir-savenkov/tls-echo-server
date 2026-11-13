@@ -245,7 +245,8 @@ void test_duration_and_histogram() {
     deliver_response(connection, Packet(100U, "Hello from C++ Client, packet #0"));
     check(client.complete(), "duration mode finishes after an in-flight request completes");
 
-    LatencyStats a, b;
+    LatencyStats a;
+    LatencyStats b;
     check(a.percentile(0.5) == 0, "empty histogram has no latency");
     a.record(10);
     b.record(100);
@@ -272,7 +273,8 @@ void test_empty_and_reentrant_sequences() {
 }
 }  // namespace
 
-int main() {
+// Необработанное исключение обрушивает тест — это и есть сигнал провала.
+int main() {  // NOLINT(bugprone-exception-escape)
     test_sequential_request_response_flow();
     test_transport_failures();
     test_invalid_responses();

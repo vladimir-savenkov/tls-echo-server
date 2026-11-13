@@ -2,6 +2,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -107,7 +108,7 @@ private:
         // может закрыться, и endpoint будет недоступен для логов.
         std::string remote_;
         bool finished_ = false;
-        char header_buf_[sizeof(PacketHeader)]{};
+        std::array<char, sizeof(PacketHeader)> header_buf_{};
         std::string payload_buf_;
         uint32_t current_id_ = 0;
         uint16_t expected_len_ = 0;

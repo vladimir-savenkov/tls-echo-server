@@ -1,0 +1,25 @@
+# Статический анализ (задача clang-tidy в CI: clang-tidy -p build по всем
+# src/*.cpp и tests/*.cpp). Отключения — осознанные решения, не «заглушить всё»:
+#   bugprone-easily-swappable-parameters — естественные типы параметров API
+#     (id/len/crc пакета, счётчики сессий); сильные typedefs — отдельная тема;
+#   modernize-use-nodiscard — повсеместный [[nodiscard]] не принимаем;
+#   modernize-use-trailing-return-type — стиль проекта: обычные возвращаемые
+#     типы;
+#   readability-braces-around-statements — стиль проекта: однострочные if без
+#     скобок для тривиальных операций;
+#   readability-identifier-length — короткие идиоматические имена (io, e, ec);
+#   readability-magic-numbers — константы протокола/CRC и тест-векторы.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -modernize-use-nodiscard,
+  -modernize-use-trailing-return-type,
+  -readability-braces-around-statements,
+  -readability-identifier-length,
+  -readability-magic-numbers
+HeaderFilterRegex: 'include/.*'
+WarningsAsErrors: '*'

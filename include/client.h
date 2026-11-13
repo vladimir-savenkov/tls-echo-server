@@ -106,7 +106,7 @@ public:
     using CompletionHandler = std::function<void()>;
     explicit TlsClient(boost::asio::io_context& io_context,
                       boost::asio::ssl::context& ssl_context,
-                      const std::string& host, unsigned short port,
+                      std::string host, unsigned short port,
                       std::shared_ptr<spdlog::logger> logger, int client_number,
                       TlsClientOptions options = {}, CompletionHandler on_complete = {});
 

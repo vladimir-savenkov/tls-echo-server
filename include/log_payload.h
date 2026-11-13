@@ -5,7 +5,7 @@
 
 // Keep packet bytes on one readable log line, including binary payloads.
 inline std::string escape_log_payload(std::string_view payload) {
-    constexpr char hex[] = "0123456789ABCDEF";
+    constexpr std::string_view hex = "0123456789ABCDEF";
     std::string escaped;
     escaped.reserve(payload.size());
 

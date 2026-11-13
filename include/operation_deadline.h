@@ -9,7 +9,9 @@
 // обработчика таймера предыдущей операции после cancel().
 class OperationDeadline {
 public:
-    explicit OperationDeadline(boost::asio::any_io_executor executor) : timer_(executor) {}
+    // Параметр — const-ссылка: конструктор steady_timer принимает executor
+    // только по const& и копирует его внутрь, перемещение невозможно по API Asio.
+    explicit OperationDeadline(const boost::asio::any_io_executor& executor) : timer_(executor) {}
 
     template <typename Handler>
     void arm(std::chrono::milliseconds timeout, Handler handler) {

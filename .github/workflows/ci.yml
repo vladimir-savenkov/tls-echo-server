@@ -57,6 +57,29 @@ jobs:
             python3 -m py_compile scripts/*.py
           bash -n scripts/*.sh
 
+  clang-tidy:
+    name: clang-tidy / Debug
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            clang-tidy cmake ninja-build libboost-all-dev libssl-dev libspdlog-dev
+
+      - name: Configure (generates compile_commands.json)
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra -Wpedantic -Werror"
+
+      - name: Run clang-tidy
+        run: clang-tidy -p build $(git ls-files 'src/*.cpp' 'tests/*.cpp')
+
   sanitizers:
     name: ${{ matrix.sanitizer }} / Debug
     runs-on: ubuntu-24.04

@@ -15,7 +15,9 @@
 
 namespace po = boost::program_options;
 
-int main(int argc, char* argv[]) {
+// Монолитный main: парсинг, валидация и оркестрация клиентов — единый поток
+// запуска читается целиком; разбиение на помощники сложность не снизит.
+int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-complexity)
     try {
         // --- 1. Парсинг аргументов ---
         po::options_description desc("C++ TLS Client");
@@ -38,7 +40,7 @@ int main(int argc, char* argv[]) {
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
 
-        if (vm.count("help")) {
+        if (vm.count("help") > 0) {
             std::cout << desc << "\n";
             return 0;
         }
@@ -65,9 +67,9 @@ int main(int argc, char* argv[]) {
         const int timeout_ms = vm["timeout-ms"].as<int>();
         const int duration = vm["duration"].as<int>();
         if (timeout_ms <= 0 || duration < 0 ||
-            (vm.count("payload-size") && (vm["payload-size"].as<int>() < 0 ||
-                                         vm["payload-size"].as<int>() > 65535)) ||
-            (vm.count("insecure") && vm.count("cert")) ||
+            (vm.count("payload-size") > 0 && (vm["payload-size"].as<int>() < 0 ||
+                                              vm["payload-size"].as<int>() > 65535)) ||
+            (vm.count("insecure") > 0 && vm.count("cert") > 0) ||
             (duration > 0 && !vm["packets"].defaulted())) {
             std::cerr << "Argument parsing error: check --timeout-ms, --payload-size, "
                          "--duration; --cert/--insecure and --duration/--packets "
@@ -77,7 +79,7 @@ int main(int argc, char* argv[]) {
         TlsClientOptions client_options;
         client_options.timeout = std::chrono::milliseconds(timeout_ms);
         client_options.run.duration = std::chrono::seconds(duration);
-        if (vm.count("payload-size")) {
+        if (vm.count("payload-size") > 0) {
             client_options.run.payload_size = static_cast<std::size_t>(vm["payload-size"].as<int>());
         }
         std::string log_file = vm["log-file"].as<std::string>();
@@ -107,16 +109,16 @@ int main(int argc, char* argv[]) {
             auto context = std::make_unique<boost::asio::ssl::context>(
                 boost::asio::ssl::context::tls_client);
             SSL_CTX_set_min_proto_version(context->native_handle(), TLS1_2_VERSION);
-            if (vm.count("insecure")) {
+            if (vm.count("insecure") > 0) {
                 context->set_verify_mode(boost::asio::ssl::verify_none);
             } else {
                 context->set_verify_mode(boost::asio::ssl::verify_peer);
-                if (vm.count("cert")) context->load_verify_file(vm["cert"].as<std::string>());
+                if (vm.count("cert") > 0) context->load_verify_file(vm["cert"].as<std::string>());
                 else context->set_default_verify_paths();
             }
             ssl_contexts.push_back(std::move(context));
         }
-        if (vm.count("insecure")) logger->warn("TLS certificate verification is disabled (--insecure)");
+        if (vm.count("insecure") > 0) logger->warn("TLS certificate verification is disabled (--insecure)");
 
         // Храним клиентов до завершения всех операций, включая отменённые.
         std::vector<std::unique_ptr<TlsClient>> clients;
@@ -142,7 +144,8 @@ int main(int argc, char* argv[]) {
         int completed_clients = 0;
         std::uint64_t packets_received = 0;
         std::uint64_t bytes_received = 0;
-        LatencyStats request_latency, setup_latency;
+        LatencyStats request_latency;
+        LatencyStats setup_latency;
         for (std::size_t index = 0; index < clients.size(); ++index) {
             const auto& client = clients[index];
             packets_received += client->packets_received();

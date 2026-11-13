@@ -19,13 +19,15 @@ void check(bool condition, const char* message) {
 
 template <typename Exception, typename Function>
 void check_throws(Function function, const char* message) {
+    bool thrown = false;
     try {
         function();
-        check(false, message);
     } catch (const Exception&) {
+        thrown = true;  // ожидаемый тип исключения
     } catch (...) {
-        check(false, message);
+        thrown = false;  // чужой тип исключения
     }
+    check(thrown, message);
 }
 
 void test_crc32_known_vectors() {

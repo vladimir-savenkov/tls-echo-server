@@ -87,7 +87,8 @@ Packet Packet::deserialize(const char* raw_header, std::size_t header_size,
 
     PacketHeader header{};
     std::memcpy(&header, raw_header, sizeof(header));
-    return Packet(wire::from_network32(header.id), wire::from_network16(header.len), wire::from_network32(header.crc), payload);
+    return {wire::from_network32(header.id), wire::from_network16(header.len),
+            wire::from_network32(header.crc), payload};
 }
 
 bool Packet::verify_crc() const {

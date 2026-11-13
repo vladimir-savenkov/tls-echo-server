@@ -24,7 +24,7 @@ TlsServer::TlsServer(boost::asio::io_context& io_context,
                     std::shared_ptr<spdlog::logger> logger, ServerOptions options)
     : io_context_(io_context), control_strand_(boost::asio::make_strand(io_context)),
       acceptor_(io_context), ssl_context_(ssl_context), logger_(std::move(logger)),
-      drain_timer_(control_strand_), retry_timer_(control_strand_), options_(options), port_(port) {
+      drain_timer_(control_strand_), retry_timer_(control_strand_), options_(std::move(options)), port_(port) {
     if (options_.max_connections == 0 || options_.max_payload > 65535 ||
         options_.operation_timeout.count() <= 0 || options_.shutdown_timeout.count() <= 0) {
         throw std::invalid_argument("Invalid server limits or timeouts");
@@ -161,7 +161,7 @@ TlsServer::Session::Session(boost::asio::io_context& io, boost::asio::ip::tcp::s
                            std::atomic<uint64_t>* echoed_packets, std::atomic<uint64_t>* echoed_bytes,
                            std::function<void(bool, bool)> on_finished)
     : strand_(boost::asio::make_strand(io)), socket_(std::move(socket), ssl),
-      deadline_(strand_), logger_(std::move(logger)), options_(options),
+      deadline_(strand_), logger_(std::move(logger)), options_(std::move(options)),
       session_id_(session_id), echoed_packets_(echoed_packets), echoed_bytes_(echoed_bytes),
       on_finished_(std::move(on_finished)) {
     boost::system::error_code endpoint_error;
@@ -238,7 +238,7 @@ void TlsServer::Session::read_header() {
             }
             if (self->failed(error)) return;
             PacketHeader header{};
-            std::memcpy(&header, self->header_buf_, sizeof(header));
+            std::memcpy(&header, self->header_buf_.data(), sizeof(header));
             self->current_id_ = wire::from_network32(header.id);
             self->expected_len_ = wire::from_network16(header.len);
             self->expected_crc_ = wire::from_network32(header.crc);

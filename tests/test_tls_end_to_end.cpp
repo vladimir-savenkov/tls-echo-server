@@ -101,7 +101,7 @@ PemBundle make_self_signed_pem(bool expired = false,
     X509_EXTENSION* san = X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name,
         const_cast<char*>(names));
     check(san != nullptr, "certificate SAN is created");
-    if (san) {
+    if (san != nullptr) {
         X509_add_ext(cert, san, -1);
         X509_EXTENSION_free(san);
     }
@@ -198,11 +198,11 @@ void test_server_rejects_corrupted_payload() {
         check(!ec, ("raw client completes TLS handshake: " + ec.message()).c_str());
 
         std::vector<char> bytes = Packet(100U, "legitimate payload").serialize();
-        bytes.back() ^= 0xFF;  // повреждаем байт полезной нагрузки -> CRC не сойдётся
+        bytes.back() = static_cast<char>(bytes.back() ^ 0xFF);  // повреждаем байт -> CRC не сойдётся
         boost::asio::write(raw, boost::asio::buffer(bytes), ec);
         check(!ec, ("raw client writes the corrupted packet: " + ec.message()).c_str());
 
-        char sink[32] = {};
+        std::array<char, 32> sink{};
         raw.read_some(boost::asio::buffer(sink), ec);
         check(ec.failed(),
               "server closes the connection instead of echoing a corrupted payload");
@@ -266,7 +266,9 @@ void test_certificate_verification() {
     }
 }
 
-void test_server_deadlines_and_limits() {
+// Линейная последовательность подслучаев: сложность от перечисления, а не от
+// запутанной логики; разбиение размажет общий контекст проверок.
+void test_server_deadlines_and_limits() {  // NOLINT(readability-function-cognitive-complexity)
     const auto pem = make_self_signed_pem();
     auto logger = make_quiet_debug_logger();
     for (int scenario = 0; scenario < 5; ++scenario) {
@@ -321,7 +323,7 @@ void test_server_deadlines_and_limits() {
 }
 
 // Управляемый TLS-узел: молчит на handshake, header, payload либо shutdown.
-void test_client_deadlines() {
+void test_client_deadlines() {  // NOLINT(readability-function-cognitive-complexity)
     const auto pem = make_self_signed_pem();
     auto logger = make_quiet_debug_logger();
     for (int scenario = 0; scenario < 4; ++scenario) {
@@ -382,7 +384,8 @@ void test_transport_write_deadline() {
     auto server_ctx = make_server_context(pem);
     auto client_ctx = make_client_context();
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
-    TlsConnection::Stream peer(io, server_ctx), socket(io, client_ctx);
+    TlsConnection::Stream peer(io, server_ctx);
+    TlsConnection::Stream socket(io, client_ctx);
     auto strand = boost::asio::make_strand(io);
     TlsConnection connection(socket, strand, logger, 1, std::chrono::milliseconds(150),
                              [](boost::system::error_code) {});
@@ -400,7 +403,7 @@ void test_transport_write_deadline() {
         boost::asio::bind_executor(strand, [&](boost::system::error_code error) {
             check(!error, "write deadline peer completes handshake");
             // Узел не читает TLS-данные; объём превышает размеры TCP-буферов.
-            connection.async_write(std::vector<char>(8 * 1024 * 1024, 'x'),
+            connection.async_write(std::vector<char>(std::size_t{8} * 1024 * 1024, 'x'),
                 [&](boost::system::error_code write_error, std::size_t) {
                     result = write_error;
                     ++completions;
@@ -471,6 +474,7 @@ void test_concurrent_tls_and_shutdown() {
         clients.back()->start(3);
     }
     std::vector<std::thread> workers;
+    workers.reserve(4);
     for (int i = 0; i < 4; ++i) workers.emplace_back([&] { io.run(); });
     for (auto& worker : workers) worker.join();
     check(completed == 16, "all concurrent clients complete once");
@@ -483,7 +487,7 @@ void test_concurrent_tls_and_shutdown() {
     // 16 клиентов по 3 пакета; чётные клиенты — пустой payload, нечётные — 65535.
     check(server.stats().packets_echoed == 48,
           "server counts all concurrent echoed packets");
-    check(server.stats().bytes_echoed == 8 * 3 * 65535,
+    check(server.stats().bytes_echoed == std::uint64_t{8} * 3 * 65535,
           "server counts concurrent echoed bytes for boundary payloads");
 }
 
@@ -513,7 +517,7 @@ void test_force_stop_closes_sessions_immediately() {
     check(server.stats().accepted == 1, "idle session is accepted before stop");
     // Висящее чтение: увидит закрытие сервера в момент force_stop.
     bool seen_close = false;
-    char dummy[10];
+    std::array<char, 10> dummy{};
     boost::asio::async_read(idle, boost::asio::buffer(dummy),
                             [&](boost::system::error_code error, std::size_t) {
                                 seen_close = static_cast<bool>(error);
@@ -651,7 +655,8 @@ void test_accept_error_backoff() {
 
 }  // namespace
 
-int main() {
+// Необработанное исключение обрушивает тест — это и есть сигнал провала.
+int main() {  // NOLINT(bugprone-exception-escape)
     test_tls_echo_round_trip();
     test_server_rejects_corrupted_payload();
     test_client_reports_connect_failure();

@@ -133,7 +133,8 @@ void test_corrupted_echo_response() {
 }
 }  // namespace
 
-int main() {
+// Необработанное исключение обрушивает тест — это и есть сигнал провала.
+int main() {  // NOLINT(bugprone-exception-escape)
     test_fragmented_multi_packet_echo();
     test_corrupted_echo_response();
     if (failures != 0) {

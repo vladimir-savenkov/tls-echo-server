@@ -40,7 +40,7 @@ int main(int argc, char* argv[]) {
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
 
-        if (vm.count("help")) {
+        if (vm.count("help") > 0) {
             std::cout << desc << "\n";
             return 0;
         }
@@ -138,6 +138,7 @@ int main(int argc, char* argv[]) {
 
         // --- 5. Пул потоков ---
         std::vector<std::thread> threads;
+        threads.reserve(static_cast<std::size_t>(thread_count));
         logger->info("Starting thread pool with {} threads", thread_count);
 
         for (int i = 0; i < thread_count; ++i) {
