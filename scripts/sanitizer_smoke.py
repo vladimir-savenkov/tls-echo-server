@@ -90,7 +90,7 @@ def main():
                         raise RuntimeError(f"{label} scenario failed: {result.stdout} {result.stderr}")
                     if label == "duration" and "/duration" not in result.stdout:
                         raise RuntimeError("duration mode did not override packet target")
-                    if "p99=" not in result.stdout or "MiB/с" not in result.stdout:
+                    if "p99=" not in result.stdout or "MiB/s" not in result.stdout:
                         raise RuntimeError("load metrics missing")
 
                 for binary, options in [
