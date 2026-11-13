@@ -78,6 +78,13 @@ add_executable(test_client tests/test_client.cpp)
 target_link_libraries(test_client PRIVATE protocol Boost::system)
 add_test(NAME client_tests COMMAND test_client)
 
+# Юнит-тест поколенческой защиты OperationDeadline: без сети, только таймеры.
+add_executable(test_operation_deadline tests/test_operation_deadline.cpp)
+target_include_directories(test_operation_deadline PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_operation_deadline PRIVATE Boost::system)
+add_test(NAME operation_deadline_tests COMMAND test_operation_deadline)
+set_tests_properties(operation_deadline_tests PROPERTIES TIMEOUT 30)
+
 add_executable(test_client_integration tests/test_client_integration.cpp)
 target_link_libraries(test_client_integration PRIVATE
     protocol
