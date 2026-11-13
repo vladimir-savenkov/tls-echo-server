@@ -10,7 +10,10 @@ import threading
 import time
 import zlib
 
-HEADER = struct.Struct("!IHI")
+PROTOCOL_MAGIC = 0x5445
+PROTOCOL_VERSION = 1
+PROTOCOL_FLAGS_NONE = 0
+HEADER = struct.Struct("!HBBIHI")
 MAX_PAYLOAD = 0xFFFF
 
 
@@ -26,6 +29,7 @@ def encode_packet(packet_id: int, payload: bytes) -> bytes:
     if len(payload) > MAX_PAYLOAD:
         raise ValueError(f"payload exceeds {MAX_PAYLOAD} bytes")
     return HEADER.pack(
+        PROTOCOL_MAGIC, PROTOCOL_VERSION, PROTOCOL_FLAGS_NONE,
         packet_id, len(payload), zlib.crc32(payload) & 0xFFFFFFFF
     ) + payload
 
@@ -43,9 +47,19 @@ def receive_exact(connection: ssl.SSLSocket, size: int) -> bytes:
 
 
 def receive_packet(connection: ssl.SSLSocket) -> tuple[int, bytes]:
-    packet_id, size, expected_crc = HEADER.unpack(
+    magic, version, flags, packet_id, size, expected_crc = HEADER.unpack(
         receive_exact(connection, HEADER.size)
     )
+    if magic != PROTOCOL_MAGIC:
+        raise ValueError(
+            f"protocol magic mismatch: expected {PROTOCOL_MAGIC:#06x}, got {magic:#06x}"
+        )
+    if version != PROTOCOL_VERSION:
+        raise ValueError(
+            f"unsupported protocol version: expected {PROTOCOL_VERSION}, got {version}"
+        )
+    if flags != PROTOCOL_FLAGS_NONE:
+        raise ValueError(f"unexpected header flags: {flags:#04x}")
     payload = receive_exact(connection, size)
     actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
     if actual_crc != expected_crc:

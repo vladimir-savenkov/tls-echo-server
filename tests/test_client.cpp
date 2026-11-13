@@ -173,6 +173,20 @@ void test_invalid_responses() {
         BasicClient<FakeConnection> client(connection);
         client.send_packets(1);
         connection.complete_write();
+        auto header = header_of(Packet(100U, "answer"));
+        header[0] = static_cast<char>(header[0] ^ 0xFF);  // ломаем старший байт magic
+        connection.complete_read(std::move(header));
+        check(client.error() == ClientError::invalid_header,
+              "response with invalid protocol magic is rejected");
+        check(connection.requested_reads == std::vector<std::size_t>{sizeof(PacketHeader)},
+              "invalid magic prevents the payload read");
+        check(connection.closed, "protocol mismatch aborts connection");
+    }
+    {
+        FakeConnection connection;
+        BasicClient<FakeConnection> client(connection);
+        client.send_packets(1);
+        connection.complete_write();
         const Packet response(100U, "answer");
         auto corrupted = payload_of(response);
         corrupted[0] ^= 1;

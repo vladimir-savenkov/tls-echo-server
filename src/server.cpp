@@ -239,6 +239,19 @@ void TlsServer::Session::read_header() {
             if (self->failed(error)) return;
             PacketHeader header{};
             std::memcpy(&header, self->header_buf_.data(), sizeof(header));
+            // Заголовок чужого формата не разбираем до конца: длина и CRC
+            // мусорного заголовка бессмысленны — закрываем без эха.
+            if (wire::from_network16(header.magic) != protocol_magic ||
+                header.version != protocol_version ||
+                header.flags != protocol_flags_none) {
+                self->logger_->warn(
+                    "Session {} ({}): protocol header mismatch: "
+                    "magic={:#06x}, version={}, flags={:#04x}",
+                    self->session_id_, self->remote_,
+                    wire::from_network16(header.magic), header.version, header.flags);
+                self->finish();
+                return;
+            }
             self->current_id_ = wire::from_network32(header.id);
             self->expected_len_ = wire::from_network16(header.len);
             self->expected_crc_ = wire::from_network32(header.crc);

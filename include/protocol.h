@@ -11,16 +11,30 @@
 // 1. Структура заголовка (Binary Layout)
 // ============================================================================
 
+// Магический маркер протокола: на проводе байты 'T','E' (TLS Echo) в сетевом
+// порядке — читается в hex-дампе и отсеивает чужой бинарный трафик.
+inline constexpr uint16_t protocol_magic = 0x5445;
+// Версия формата заголовка. Несовпадение — протокольная ошибка: формат
+// эволюционирует версиями, обратной совместимости на проводе нет (сервер и
+// клиент живут в одном репозитории и обновляются синхронно).
+inline constexpr uint8_t protocol_version = 1;
+// Зарезервированные флаги заголовка: известное значение 0, неизвестные биты
+// отвергаются, чтобы будущие расширения не трактовались молча.
+inline constexpr uint8_t protocol_flags_none = 0;
+
 #pragma pack(push, 1)
 struct PacketHeader {
+    uint16_t magic;
+    uint8_t version;
+    uint8_t flags;
     uint32_t id;
     uint16_t len;
     uint32_t crc;
 };
 #pragma pack(pop)
 
-static_assert(sizeof(PacketHeader) == 10, 
-              "PacketHeader must be exactly 10 bytes");
+static_assert(sizeof(PacketHeader) == 14, 
+              "PacketHeader must be exactly 14 bytes");
 
 // ============================================================================
 // 2. Класс Packet (Публичный интерфейс)

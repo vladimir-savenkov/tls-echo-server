@@ -162,6 +162,14 @@ private:
 
                 PacketHeader decoded{};
                 std::memcpy(&decoded, header.data(), sizeof(decoded));
+                // Чужой формат заголовка: не читаем мусорную длину payload,
+                // падаем сразу; deserialize ниже продублирует проверку.
+                if (wire::from_network16(decoded.magic) != protocol_magic ||
+                    decoded.version != protocol_version ||
+                    decoded.flags != protocol_flags_none) {
+                    fail(ClientError::invalid_header);
+                    return;
+                }
                 const std::size_t payload_size = wire::from_network16(decoded.len);
                 if (state_callback_) {
                     log_state("response header parsed: id=" + std::to_string(wire::from_network32(decoded.id)) +

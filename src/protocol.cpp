@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -64,6 +65,9 @@ void Packet::update_crc() {
 
 std::vector<char> Packet::serialize() const {
     PacketHeader header{};
+    header.magic = wire::to_network16(protocol_magic);
+    header.version = protocol_version;
+    header.flags = protocol_flags_none;
     header.id = wire::to_network32(id_);
     header.len = wire::to_network16(length());
     header.crc = wire::to_network32(crc_);
@@ -82,11 +86,21 @@ Packet Packet::deserialize(const char* raw_header, std::size_t header_size,
         throw std::invalid_argument("Packet header is null");
     }
     if (header_size != sizeof(PacketHeader)) {
-        throw std::invalid_argument("Packet header must be exactly 10 bytes");
+        throw std::invalid_argument("Packet header must be exactly " +
+                                    std::to_string(sizeof(PacketHeader)) + " bytes");
     }
 
     PacketHeader header{};
     std::memcpy(&header, raw_header, sizeof(header));
+    if (wire::from_network16(header.magic) != protocol_magic) {
+        throw std::invalid_argument("Packet header has invalid protocol magic");
+    }
+    if (header.version != protocol_version) {
+        throw std::invalid_argument("Packet header has unsupported protocol version");
+    }
+    if (header.flags != protocol_flags_none) {
+        throw std::invalid_argument("Packet header has unexpected flags");
+    }
     return {wire::from_network32(header.id), wire::from_network16(header.len),
             wire::from_network32(header.crc), payload};
 }

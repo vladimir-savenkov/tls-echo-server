@@ -213,6 +213,49 @@ void test_server_rejects_corrupted_payload() {
     io_thread.join();
 }
 
+// Несовпадение magic/версии/флагов — протокольная ошибка: сервер обязан
+// закрыть соединение без эха, не дожидаясь payload.
+void test_server_rejects_protocol_header_mismatch() {
+    const PemBundle pem = make_self_signed_pem();
+    auto logger = make_quiet_debug_logger();
+
+    // Ломаем по одному байту заголовка: 0 — старший байт magic, 2 — версия,
+    // 3 — флаги.
+    for (std::size_t offset : {std::size_t{0}, std::size_t{2}, std::size_t{3}}) {
+        boost::asio::io_context io;
+        boost::asio::ssl::context server_ctx = make_server_context(pem);
+        boost::asio::ssl::context client_ctx = make_client_context();
+
+        TlsServer server(io, server_ctx, 0, logger);
+        std::thread io_thread([&io] { io.run(); });
+        {
+            boost::asio::ssl::stream<boost::asio::ip::tcp::socket> raw(io, client_ctx);
+            boost::system::error_code ec;
+            // Wildcard 0.0.0.0 подходит для bind, но Winsock отвергает его в connect.
+            raw.lowest_layer().connect(
+                boost::asio::ip::tcp::endpoint(
+                    boost::asio::ip::address_v4::loopback(), server.port()), ec);
+            check(!ec, ("raw client connects: " + ec.message()).c_str());
+            raw.handshake(boost::asio::ssl::stream_base::client, ec);
+            check(!ec, ("raw client completes TLS handshake: " + ec.message()).c_str());
+
+            std::vector<char> bytes = Packet(100U, "legitimate payload").serialize();
+            bytes[offset] = static_cast<char>(bytes[offset] ^ 0xFF);
+            boost::asio::write(raw, boost::asio::buffer(bytes), ec);
+            check(!ec, ("raw client writes the mismatched packet: " + ec.message()).c_str());
+
+            std::array<char, 32> sink{};
+            raw.read_some(boost::asio::buffer(sink), ec);
+            check(ec.failed(),
+                  "server closes the connection on a protocol header mismatch");
+            raw.lowest_layer().close(ec);
+        }
+
+        boost::asio::post(io, [&server] { server.stop(); });
+        io_thread.join();
+    }
+}
+
 void test_client_reports_connect_failure() {
     const PemBundle pem = make_self_signed_pem();
     auto logger = make_quiet_debug_logger();
@@ -659,6 +702,7 @@ void test_accept_error_backoff() {
 int main() {  // NOLINT(bugprone-exception-escape)
     test_tls_echo_round_trip();
     test_server_rejects_corrupted_payload();
+    test_server_rejects_protocol_header_mismatch();
     test_client_reports_connect_failure();
     test_certificate_verification();
     test_server_deadlines_and_limits();

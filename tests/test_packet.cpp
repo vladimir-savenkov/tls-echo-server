@@ -58,6 +58,10 @@ void test_construction_and_serialization() {
     check(wire::from_network32(header.id) == packet.id(), "id uses network byte order");
     check(wire::from_network16(header.len) == payload.size(), "length uses network byte order");
     check(wire::from_network32(header.crc) == packet.crc(), "CRC uses network byte order");
+    check(wire::from_network16(header.magic) == protocol_magic,
+          "header carries the protocol magic");
+    check(header.version == protocol_version, "header carries the protocol version");
+    check(header.flags == protocol_flags_none, "header carries no flags");
     check(std::string(bytes.data() + sizeof(header), payload.size()) == payload,
           "serialization preserves payload bytes");
 }
@@ -88,6 +92,9 @@ void test_invalid_input_and_boundaries() {
         "mismatched payload length is rejected");
 
     PacketHeader header{};
+    header.magic = wire::to_network16(protocol_magic);
+    header.version = protocol_version;
+    header.flags = protocol_flags_none;
     header.id = wire::to_network32(1U);
     header.len = wire::to_network16(2U);
     check_throws<std::invalid_argument>(
@@ -99,6 +106,30 @@ void test_invalid_input_and_boundaries() {
     check_throws<std::invalid_argument>(
         [&] { Packet::deserialize(reinterpret_cast<const char*>(&header), sizeof(header), "x"); },
         "header and payload length mismatch is rejected");
+
+    // Порча полей magic/version/flags в валидном пакете: заголовок чужого
+    // формата обязан отвергаться до разбора полезной нагрузки.
+    {
+        auto bytes = Packet(1U, "xx").serialize();
+        bytes[0] = static_cast<char>(bytes[0] ^ 0xFF);
+        check_throws<std::invalid_argument>(
+            [&] { Packet::deserialize(bytes.data(), sizeof(PacketHeader), "xx"); },
+            "invalid protocol magic is rejected");
+    }
+    {
+        auto bytes = Packet(1U, "xx").serialize();
+        bytes[2] = static_cast<char>(bytes[2] ^ 0xFF);
+        check_throws<std::invalid_argument>(
+            [&] { Packet::deserialize(bytes.data(), sizeof(PacketHeader), "xx"); },
+            "unsupported protocol version is rejected");
+    }
+    {
+        auto bytes = Packet(1U, "xx").serialize();
+        bytes[3] = static_cast<char>(bytes[3] ^ 0xFF);
+        check_throws<std::invalid_argument>(
+            [&] { Packet::deserialize(bytes.data(), sizeof(PacketHeader), "xx"); },
+            "unexpected protocol flags are rejected");
+    }
 
     const Packet maximum(1U, std::string(std::numeric_limits<uint16_t>::max(), 'x'));
     check(maximum.length() == std::numeric_limits<uint16_t>::max(),
@@ -112,6 +143,7 @@ void test_defaults_golden_bytes_and_random_round_trips() {
 
     const Packet golden(0x01020304U, "123456789");
     const std::vector<char> expected{
+        0x54, 0x45, 0x01, 0x00,  // magic 'T','E', версия 1, флаги 0
         0x01, 0x02, 0x03, 0x04, 0x00, 0x09,
         static_cast<char>(0xCB), static_cast<char>(0xF4), 0x39, 0x26,
         '1', '2', '3', '4', '5', '6', '7', '8', '9'};
