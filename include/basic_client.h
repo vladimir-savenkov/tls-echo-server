@@ -4,6 +4,7 @@
 #include "log_payload.h"
 #include "latency_stats.h"
 #include <chrono>
+#include <deque>
 #include <optional>
 #include <stdexcept>
 
@@ -47,10 +48,21 @@ inline const char* client_error_name(ClientError error) {
     return "unknown";
 }
 
+// Предел окна pipelining: защищает от бессмысленно длинных очередей in-flight.
+inline constexpr std::size_t max_client_window = 1024;
+
 struct ClientRunOptions {
     std::optional<std::size_t> payload_size;
     std::chrono::milliseconds duration{0};
+    // Число запросов в полёте без ответа; больше единицы включает
+    // pipelining и действует только в режиме duration.
+    std::size_t window = 8;
 };
+
+// Эффективное окно: в счётном режиме — строго один запрос в полёте.
+inline std::size_t effective_window(const ClientRunOptions& options) {
+    return options.duration.count() > 0 ? options.window : std::size_t{1};
+}
 
 // Connection is a compile-time interface. It must provide:
 //   async_write(vector<char>, handler(error_code, size_t))
@@ -66,9 +78,13 @@ public:
         : connection_(connection), state_callback_(std::move(state_callback)),
           completion_callback_(std::move(completion_callback)), options_(options) {
         if ((options_.payload_size && *options_.payload_size > 65535) ||
-            options_.duration.count() < 0) {
+            options_.duration.count() < 0 ||
+            options_.window == 0 || options_.window > max_client_window) {
             throw std::invalid_argument("Invalid client run options");
         }
+        // Pipelining действует только в режиме длительности: счётный режим
+        // сохраняет строгий запрос/ответ ради честных измерений задержки.
+        window_ = effective_window(options_);
     }
 
     void send_packets(int count) {
@@ -87,14 +103,19 @@ public:
         packets_to_send_ = count > 0 ? static_cast<uint64_t>(count) : 0;
         error_ = ClientError::none;
         server_error_code_ = 0;
+        inflight_started_.clear();
+        inflight_payloads_.clear();
+        write_outstanding_ = false;
+        reading_ = false;
         complete_ = packets_to_send_ == 0 && options_.duration.count() == 0;
         active_ = !complete_;
         if (state_callback_) {
-            log_state("request sequence started: target=" + std::to_string(packets_to_send_));
+            log_state("request sequence started: target=" + std::to_string(packets_to_send_) +
+                      ", window=" + std::to_string(window_));
         }
 
         if (active_) {
-            send_next_packet();
+            maybe_send();
         } else {
             connection_.close();
             notify();
@@ -110,24 +131,47 @@ public:
     uint32_t server_error_code() const { return server_error_code_; }
     uint64_t bytes_received() const { return bytes_received_; }
     const LatencyStats& latency() const { return latency_; }
+    // Эффективное окно запросов в полёте (в счётном режиме — всегда 1).
+    std::size_t window() const { return window_; }
 
 private:
+    // Отправляет запросы, пока есть место в окне и причины отправлять.
+    // Записи строго последовательны (один async_write в полёте): параллельные
+    // записи в один сокет недопустимы, окно ограничивает запросы без ответа.
+    void maybe_send() {
+        if (!active_ || write_outstanding_) return;
+        if (inflight_payloads_.size() >= window_) return;
+        if (options_.duration.count() > 0) {
+            // Режим длительности: после истечения срока новые запросы
+            // не отправляются — дорабатываются только уже отправленные.
+            if (std::chrono::steady_clock::now() - run_started_ >= options_.duration) return;
+        } else if (packets_sent_ >= packets_to_send_) {
+            return;
+        }
+        send_next_packet();
+    }
+
     void send_next_packet() {
         const auto packet_number = packets_sent_;
-        expected_payload_ = "Hello from C++ Client, packet #" + std::to_string(packet_number);
+        std::string payload = "Hello from C++ Client, packet #" + std::to_string(packet_number);
         if (options_.payload_size) {
-            expected_payload_.resize(*options_.payload_size);
-            for (std::size_t i = 0; i < expected_payload_.size(); ++i) {
-                expected_payload_[i] = static_cast<char>((i + packet_number) % 256);
+            payload.resize(*options_.payload_size);
+            for (std::size_t i = 0; i < payload.size(); ++i) {
+                payload[i] = static_cast<char>((i + packet_number) % 256);
             }
         }
-        request_started_ = std::chrono::steady_clock::now();
-        auto bytes = Packet(100U + static_cast<uint32_t>(packet_number), expected_payload_).serialize();
+        // Метка и ожидаемая нагрузка уходят в очередь in-flight: при окне > 1
+        // ответ сверяется со своим запросом, а не с последним отправленным.
+        inflight_started_.push_back(std::chrono::steady_clock::now());
+        inflight_payloads_.push_back(std::move(payload));
+        write_outstanding_ = true;
+        auto bytes = Packet(100U + static_cast<uint32_t>(packet_number),
+                            inflight_payloads_.back()).serialize();
         if (state_callback_) {
             log_state("sending packet=" + std::to_string(packet_number + 1) +
                       "/" + std::to_string(packets_to_send_) +
                       ", id=" + std::to_string(100U + packet_number) +
-                      ", data=\"" + escape_log_payload(expected_payload_) + "\"");
+                      ", data=\"" + escape_log_payload(inflight_payloads_.back()) + "\"");
         }
 
         connection_.async_write(std::move(bytes),
@@ -141,10 +185,17 @@ private:
                     return;
                 }
                 ++packets_sent_;
+                write_outstanding_ = false;
                 if (state_callback_) {
                     log_state("packet sent: total=" + std::to_string(packets_sent_));
                 }
-                read_header();
+                // Цепочка чтения одна и стартует с первой завершённой записи;
+                // дальше она живёт, пока есть запросы без ответа.
+                if (!reading_ && !inflight_payloads_.empty()) {
+                    reading_ = true;
+                    read_header();
+                }
+                maybe_send();
             });
     }
 
@@ -242,7 +293,7 @@ private:
                         fail(ClientError::unexpected_packet_id);
                         return;
                     }
-                    if (packet.payload() != expected_payload_) {
+                    if (packet.payload() != inflight_payloads_.front()) {
                         fail(ClientError::unexpected_payload);
                         return;
                     }
@@ -253,15 +304,24 @@ private:
 
                 ++packets_received_;
                 bytes_received_ += payload.size();
+                // Задержка — от метки отправки своего запроса: очередь in-flight
+                // параллельна, ответы приходят в порядке отправки (FIFO).
+                const auto started = inflight_started_.front();
+                inflight_started_.pop_front();
+                inflight_payloads_.pop_front();
                 const auto now = std::chrono::steady_clock::now();
-                latency_.record(std::chrono::duration<double, std::micro>(now - request_started_).count());
+                latency_.record(std::chrono::duration<double, std::micro>(now - started).count());
                 if (state_callback_) {
                     log_state("response validated: received=" + std::to_string(packets_received_) +
                               "/" + std::to_string(packets_to_send_));
                 }
-                if (options_.duration.count() > 0
-                        ? now - run_started_ >= options_.duration
-                        : packets_received_ == packets_to_send_) {
+                // Завершение: счётный режим — получены все ответы; режим
+                // длительности — срок истёк и окно in-flight пустое
+                // (отправленные запросы доработаны до полных ответов).
+                const bool done = options_.duration.count() > 0
+                    ? (now - run_started_ >= options_.duration && inflight_payloads_.empty())
+                    : packets_received_ == packets_to_send_;
+                if (done) {
                     active_ = false;
                     complete_ = true;
                     if (state_callback_) log_state("request sequence complete; closing connection");
@@ -269,11 +329,19 @@ private:
                     notify();
                     return;
                 }
-                send_next_packet();
+                if (inflight_payloads_.empty()) {
+                    reading_ = false;  // новых ответов нет — цепочка возобновится после следующей записи
+                } else {
+                    read_header();    // ответы ещё в полёте — читаем дальше
+                }
+                maybe_send();
             });
     }
 
     void fail(ClientError error) {
+        // Отменённые после abort() операции (при окне > 1 запись и чтение
+        // висят одновременно) не переписывают причину: остаётся первая ошибка.
+        if (!active_) return;
         if (state_callback_) {
             log_state(std::string("request sequence failed: error=") + client_error_name(error));
         }
@@ -300,13 +368,17 @@ private:
     std::function<void(const std::string&)> state_callback_;
     std::function<void(ClientError)> completion_callback_;
     ClientRunOptions options_;
-    std::string expected_payload_;
-    std::chrono::steady_clock::time_point request_started_, run_started_;
+    std::size_t window_ = 1;
+    std::deque<std::chrono::steady_clock::time_point> inflight_started_;
+    std::deque<std::string> inflight_payloads_;
+    std::chrono::steady_clock::time_point run_started_;
     LatencyStats latency_;
     uint64_t bytes_received_ = 0;
     uint64_t packets_sent_ = 0;
     uint64_t packets_received_ = 0;
     uint64_t packets_to_send_ = 0;
+    bool write_outstanding_ = false;
+    bool reading_ = false;
     bool notified_ = false;
     bool active_ = false;
     bool complete_ = false;

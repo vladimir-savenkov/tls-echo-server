@@ -173,6 +173,42 @@ void test_tls_echo_round_trip() {
           "server counts echoed payload bytes");
 }
 
+// Pipelining в режиме длительности: реальный TLS-сервер, окно запросов
+// в полёте, перекрёстная сверка счётчиков сервера и клиента.
+void test_pipelined_duration_window() {
+    const PemBundle pem = make_self_signed_pem();
+    auto logger = make_quiet_debug_logger();
+
+    boost::asio::io_context io;
+    boost::asio::ssl::context server_ctx = make_server_context(pem);
+    boost::asio::ssl::context client_ctx = make_client_context();
+
+    TlsServer server(io, server_ctx, 0, logger);  // порт 0 — эфемерный
+    check(server.port() != 0, "pipelining server reports its bound port");
+
+    TlsClientOptions options;
+    options.run.duration = std::chrono::seconds(1);
+    options.run.window = 4;
+
+    TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1, options);
+    client.start(5);  // счётчик игнорируется в режиме длительности
+
+    const bool finished = wait_for(io, [&client] {
+        return client.succeeded() || client.failure_reason() != "none";
+    }, std::chrono::seconds(10));
+    stop_and_drain(io, server);
+
+    check(finished && client.succeeded(),
+          "pipelined duration client finishes cleanly in time");
+    check(client.exchange_complete() && client.packets_received() > 0,
+          "pipelined client drains every in-flight request");
+    const auto stats = server.stats();
+    check(stats.packets_echoed == client.packets_received(),
+          "server echoes every pipelined packet");
+    check(stats.bytes_echoed == client.bytes_received(),
+          "server counts pipelined payload bytes");
+}
+
 void test_server_rejects_corrupted_payload() {
     const PemBundle pem = make_self_signed_pem();
     auto logger = make_quiet_debug_logger();
@@ -779,6 +815,7 @@ void test_accept_error_backoff() {
 // Необработанное исключение обрушивает тест — это и есть сигнал провала.
 int main() {  // NOLINT(bugprone-exception-escape)
     test_tls_echo_round_trip();
+    test_pipelined_duration_window();
     test_server_rejects_corrupted_payload();
     test_server_rejects_protocol_header_mismatch();
     test_client_reports_connect_failure();

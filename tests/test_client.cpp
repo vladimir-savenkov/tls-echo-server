@@ -327,6 +327,148 @@ void test_empty_and_reentrant_sequences() {
     check(client.error() == ClientError::already_started, "active sequence cannot be restarted");
     check(connection.writes.size() == 1, "restart does not create an overlapping write");
 }
+
+// Окно pipelining в режиме длительности: несколько запросов в полёте без
+// ответа, read-цепочка одна и живёт, пока окно не опустеет; истёкший срок
+// прекращает отправку, но отправленные запросы дорабатываются до полных ответов.
+void test_window_pipelining() {
+    FakeConnection connection;
+    int completions = 0;
+    ClientError result = ClientError::none;
+    ClientRunOptions options;
+    options.duration = std::chrono::milliseconds(100);
+    options.window = 3;
+    BasicClient<FakeConnection> client(connection, {}, [&](ClientError error) {
+        ++completions;
+        result = error;
+    }, options);
+    client.send_packets(5);  // счётчик в режиме длительности игнорируется
+
+    check(connection.writes.size() == 1, "pipelining starts with a single request");
+    check(connection.requested_reads.empty(), "read chain waits for the first completed write");
+    connection.complete_write();
+    check(connection.writes.size() == 2, "second request is pipelined before any response");
+    check(connection.requested_reads == std::vector<std::size_t>{sizeof(PacketHeader)},
+          "read chain starts with the first completed write");
+    connection.complete_write();
+    check(connection.writes.size() == 3, "third request fills the window");
+    connection.complete_write();
+    check(connection.writes.size() == 3, "window is full: no fourth request without a response");
+    check(serialized_id(connection.writes[0]) == 100U &&
+          serialized_id(connection.writes[1]) == 101U &&
+          serialized_id(connection.writes[2]) == 102U,
+          "pipelined requests keep sequential ids");
+
+    deliver_response(connection, Packet(100U, "Hello from C++ Client, packet #0"));
+    check(client.packets_received() == 1, "first response is processed in order");
+    check(connection.writes.size() == 4, "response frees a window slot for the next request");
+    check(serialized_id(connection.writes[3]) == 103U, "next request continues the id sequence");
+    connection.complete_write();
+
+    // Истечение срока: новые запросы не отправляются, in-flight дорабатываются.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    deliver_response(connection, Packet(101U, "Hello from C++ Client, packet #1"));
+    check(connection.writes.size() == 4, "expired duration stops new requests");
+    deliver_response(connection, Packet(102U, "Hello from C++ Client, packet #2"));
+    deliver_response(connection, Packet(103U, "Hello from C++ Client, packet #3"));
+    check(client.complete(), "sequence completes after in-flight responses drain");
+    check(completions == 1 && result == ClientError::none,
+          "pipelined sequence completes exactly once without error");
+    check(client.packets_sent() == 4 && client.packets_received() == 4,
+          "pipelined sequence counts sent and received packets");
+    check(client.latency().count() == 4, "every response contributes a latency sample");
+    check(connection.closed, "completed sequence closes the connection");
+}
+
+// Счётный режим форсирует окно 1: строгий запрос/ответ ради честных задержек.
+void test_counting_mode_forces_strict_window() {
+    FakeConnection connection;
+    ClientRunOptions options;
+    options.window = 8;
+    BasicClient<FakeConnection> client(connection, {}, {}, options);
+    check(client.window() == 1, "counting mode forces a single in-flight request");
+    client.send_packets(2);
+    check(connection.writes.size() == 1, "counting mode sends one request first");
+    connection.complete_write();
+    check(connection.writes.size() == 1, "no second request before the first response");
+    deliver_response(connection, Packet(100U, "Hello from C++ Client, packet #0"));
+    check(connection.writes.size() == 2, "next request waits for the previous response");
+    connection.complete_write();
+    deliver_response(connection, Packet(101U, "Hello from C++ Client, packet #1"));
+    check(client.complete() && client.error() == ClientError::none,
+          "strict sequence completes in counting mode");
+}
+
+// Окно вне диапазона 1..1024 отвергается конструктором.
+void test_window_validation() {
+    for (const std::size_t window : {std::size_t{0}, max_client_window + 1}) {
+        bool threw = false;
+        try {
+            FakeConnection connection;
+            ClientRunOptions options;
+            options.duration = std::chrono::milliseconds(1);
+            options.window = window;
+            BasicClient<FakeConnection> client(connection, {}, {}, options);
+            client.send_packets(0);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        check(threw, "window out of range is rejected by the constructor");
+    }
+}
+
+// Чужой id внутри окна: порядок ответов FIFO, иначе отказ соединения.
+void test_window_rejects_unexpected_id() {
+    FakeConnection connection;
+    ClientRunOptions options;
+    options.duration = std::chrono::milliseconds(100);
+    options.window = 3;
+    BasicClient<FakeConnection> client(connection, {}, {}, options);
+    client.send_packets(5);
+    connection.complete_write();
+    connection.complete_write();
+    connection.complete_write();
+    deliver_response(connection, Packet(105U, "Hello from C++ Client, packet #0"));
+    check(client.error() == ClientError::unexpected_packet_id,
+          "foreign id inside the window is rejected");
+    check(connection.closed, "unexpected id aborts the pipelined connection");
+}
+
+// Ошибка транспорта посреди окна: abort и единственный completion.
+void test_window_transport_failure() {
+    {
+        FakeConnection connection;
+        ClientRunOptions options;
+        options.duration = std::chrono::milliseconds(100);
+        options.window = 3;
+        BasicClient<FakeConnection> client(connection, {}, {}, options);
+        client.send_packets(5);
+        connection.complete_write();
+        connection.complete_write();
+        connection.complete_write(test_error());
+        check(client.error() == ClientError::write_failed,
+              "write error inside the window aborts the sequence");
+        check(connection.closed, "write failure aborts the pipelined connection");
+    }
+    {
+        FakeConnection connection;
+        int completions = 0;
+        ClientRunOptions options;
+        options.duration = std::chrono::milliseconds(100);
+        options.window = 3;
+        BasicClient<FakeConnection> client(connection, {},
+            [&](ClientError) { ++completions; }, options);
+        client.send_packets(5);
+        connection.complete_write();
+        connection.complete_write();
+        connection.complete_write();
+        connection.complete_read({}, test_error());
+        check(client.error() == ClientError::header_read_failed,
+              "header error inside the window aborts the sequence");
+        check(completions == 1, "transport failure completes exactly once");
+        check(connection.closed, "read failure aborts the pipelined connection");
+    }
+}
 }  // namespace
 
 // Необработанное исключение обрушивает тест — это и есть сигнал провала.
@@ -338,6 +480,11 @@ int main() {  // NOLINT(bugprone-exception-escape)
     test_exact_payload_and_completion();
     test_binary_payload_boundaries();
     test_duration_and_histogram();
+    test_window_pipelining();
+    test_counting_mode_forces_strict_window();
+    test_window_validation();
+    test_window_rejects_unexpected_id();
+    test_window_transport_failure();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;

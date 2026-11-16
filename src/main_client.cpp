@@ -32,6 +32,7 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
             ("timeout-ms", po::value<int>()->default_value(10000), "deadline per network operation, milliseconds")
             ("payload-size", po::value<int>(), "binary payload size, 0..65535 bytes")
             ("duration", po::value<int>()->default_value(0), "run each connection for this many seconds instead of packet count")
+            ("window", po::value<int>()->default_value(8), "pipelining window for --duration mode, 1..1024 (1 = strict request/response)")
             ("threads,t", po::value<int>()->default_value(1), "number of I/O worker threads (positive)")
             ("log-file,l", po::value<std::string>()->default_value("client.log"), "log file path")
             ("log-append", "append to the log file instead of truncating it on start")
@@ -66,19 +67,22 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
         }
         const int timeout_ms = vm["timeout-ms"].as<int>();
         const int duration = vm["duration"].as<int>();
-        if (timeout_ms <= 0 || duration < 0 ||
+        const int window = vm["window"].as<int>();
+        if (timeout_ms <= 0 || duration < 0 || window < 1 ||
+            window > static_cast<int>(max_client_window) ||
             (vm.count("payload-size") > 0 && (vm["payload-size"].as<int>() < 0 ||
                                               vm["payload-size"].as<int>() > 65535)) ||
             (vm.count("insecure") > 0 && vm.count("cert") > 0) ||
             (duration > 0 && !vm["packets"].defaulted())) {
             std::cerr << "Argument parsing error: check --timeout-ms, --payload-size, "
-                         "--duration; --cert/--insecure and --duration/--packets "
+                         "--duration, --window; --cert/--insecure and --duration/--packets "
                          "are mutually exclusive\n";
             return 1;
         }
         TlsClientOptions client_options;
         client_options.timeout = std::chrono::milliseconds(timeout_ms);
         client_options.run.duration = std::chrono::seconds(duration);
+        client_options.run.window = static_cast<std::size_t>(window);
         if (vm.count("payload-size") > 0) {
             client_options.run.payload_size = static_cast<std::size_t>(vm["payload-size"].as<int>());
         }
@@ -91,6 +95,13 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
         // --log-append дописывает журнал, без флага файл усекается.
         auto logger = make_logger("client", log_file, log_append);
         logger->set_level(log_level_from_string(log_level_str, *logger));
+
+        // Окно pipelining имеет смысл только в режиме --duration: счётный
+        // режим держит строгий запрос/ответ ради честных измерений задержки.
+        if (duration == 0 && !vm["window"].defaulted() && window != 1) {
+            logger->warn("Pipelining window applies to --duration mode only; "
+                         "using strict request/response");
+        }
 
         logger->info("Starting {} clients with {} worker threads, {} packets each; target {}:{}",
                      client_count, thread_count, packet_count, host, port);

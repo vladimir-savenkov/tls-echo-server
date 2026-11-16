@@ -114,7 +114,10 @@ void TlsClient::finish(std::string error) {
     connection_error_ = std::move(error);
     if (!connection_.timeout_stage().empty()) {
         std::string stage = connection_.timeout_stage();
-        if (stage == "read") {
+        // При окне > 1 запись и чтение висят одновременно: после таймаута
+        // первым завершается любой из них, поэтому стадию чтения
+        // (header/payload) по коду ошибки клиента не уточняем.
+        if (stage == "read" && client_.window() <= 1) {
             stage = client_.error() == ClientError::header_read_failed ? "header read" : "payload read";
         }
         connection_error_ = stage + ": timed out";

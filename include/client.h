@@ -22,39 +22,42 @@ public:
                   std::shared_ptr<spdlog::logger> logger, int client_number,
                   std::chrono::milliseconds timeout, CloseHandler on_closed)
         : socket_(socket), strand_(strand), logger_(std::move(logger)),
-          client_number_(client_number), deadline_(strand), timeout_(timeout),
+          client_number_(client_number), write_deadline_(strand),
+          read_deadline_(strand), timeout_(timeout),
           on_closed_(std::move(on_closed)) {}
 
     template <typename Handler>
     void async_write(std::vector<char> bytes, Handler&& handler) {
         auto buffer = std::make_shared<std::vector<char>>(std::move(bytes));
-        begin("write");
+        begin(write_deadline_, "write");
         boost::asio::async_write(socket_, boost::asio::buffer(*buffer),
             boost::asio::bind_executor(strand_,
             [this, buffer, handler = std::forward<Handler>(handler)](
                 boost::system::error_code error, std::size_t size) mutable {
-                handler(end(error), size);
+                handler(end(write_deadline_, error), size);
             }));
     }
 
     template <typename Handler>
     void async_read_exactly(std::size_t size, Handler&& handler) {
         auto buffer = std::make_shared<std::vector<char>>(size);
-        begin("read");
+        begin(read_deadline_, "read");
         boost::asio::async_read(socket_, boost::asio::buffer(*buffer),
             boost::asio::bind_executor(strand_,
             [this, buffer, handler = std::forward<Handler>(handler)](
                 boost::system::error_code error, std::size_t bytes_read) mutable {
                 if (!error && bytes_read != buffer->size()) error = boost::asio::error::message_size;
-                handler(end(error), std::move(*buffer));
+                handler(end(read_deadline_, error), std::move(*buffer));
             }));
     }
 
+    // Shutdown не пересекается с обменом: завершение вызывается при пустом
+    // окне in-flight, поэтому занимает дедлайн записи (исходящая операция).
     void close() {
-        begin("TLS shutdown");
+        begin(write_deadline_, "TLS shutdown");
         socket_.async_shutdown(boost::asio::bind_executor(strand_,
             [this](boost::system::error_code error) {
-                error = end(error);
+                error = end(write_deadline_, error);
                 abort();
                 on_closed_(error);
             }));
@@ -62,31 +65,38 @@ public:
 
     // Аварийное закрытие не ждёт TLS close_notify от неисправного узла.
     void abort() {
-        deadline_.cancel();
+        write_deadline_.cancel();
+        read_deadline_.cancel();
         boost::system::error_code ignored;
         socket_.lowest_layer().close(ignored);
     }
     const std::string& timeout_stage() const { return timeout_stage_; }
 
 private:
-    void begin(const char* stage) {
+    // При окне > 1 запись и чтение висят одновременно: у каждого направления
+    // свой дедлайн, иначе end() записи отменял бы таймер ожидающего чтения.
+    void begin(OperationDeadline& deadline, const char* stage) {
         logger_->debug("Client {} {} scheduled", client_number_, stage);
-        deadline_.arm(timeout_, [this, stage] {
+        deadline.arm(timeout_, [this, stage] {
             timeout_stage_ = stage;
             boost::system::error_code ignored;
             socket_.lowest_layer().close(ignored);
         });
     }
-    boost::system::error_code end(boost::system::error_code error) {
-        if (deadline_.expired()) error = boost::asio::error::timed_out;
-        deadline_.cancel();
+    // Не использует члены класса: дедлайн передаётся параметром, поэтому
+    // метод статический.
+    static boost::system::error_code end(OperationDeadline& deadline,
+                                         boost::system::error_code error) {
+        if (deadline.expired()) error = boost::asio::error::timed_out;
+        deadline.cancel();
         return error;
     }
     Stream& socket_;
     Strand& strand_;
     std::shared_ptr<spdlog::logger> logger_;
     int client_number_;
-    OperationDeadline deadline_;
+    OperationDeadline write_deadline_;
+    OperationDeadline read_deadline_;
     std::chrono::milliseconds timeout_;
     CloseHandler on_closed_;
     std::string timeout_stage_;
