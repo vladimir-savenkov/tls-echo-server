@@ -136,6 +136,43 @@ void test_invalid_input_and_boundaries() {
           "maximum payload length is accepted");
 }
 
+void test_error_notification_packets() {
+    const Packet notification = Packet::make_error(packet_error_oversize);
+    check(notification.id() == packet_error_oversize, "notification carries the error code as id");
+    check(notification.flags() == protocol_flag_error, "notification sets the error flag");
+    check(notification.length() == 0 && notification.payload().empty(),
+          "notification carries no payload");
+    check(notification.crc() == 0U && notification.verify_crc(),
+          "notification CRC matches the empty payload");
+
+    const std::vector<char> expected{
+        0x54, 0x45, 0x01, 0x01,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00};
+    check(notification.serialize() == expected,
+          "notification matches the golden wire format");
+
+    const Packet decoded = Packet::deserialize(expected.data(), sizeof(PacketHeader), "");
+    check(decoded.flags() == protocol_flag_error && decoded.id() == packet_error_oversize &&
+              decoded.verify_crc(),
+          "notification survives a round trip");
+
+    auto with_unknown_bits = expected;
+    with_unknown_bits[3] = static_cast<char>(0x03);  // бит уведомления + неизвестный бит
+    check_throws<std::invalid_argument>(
+        [&] { Packet::deserialize(with_unknown_bits.data(), sizeof(PacketHeader), ""); },
+        "notification with unknown flag bits is rejected");
+    check_throws<std::invalid_argument>(
+        [] { Packet packet(1U, 1U, 0U, "x", protocol_flag_error); },
+        "error notification with payload is rejected");
+
+    check(packet_error_name(packet_error_oversize) == "oversize payload" &&
+              packet_error_name(packet_error_protocol) == "protocol error",
+          "error codes have readable names");
+    check(packet_error_name(99U) == "unknown error (code 99)",
+          "unknown error code is named with its number");
+}
+
 void test_defaults_golden_bytes_and_random_round_trips() {
     const Packet empty;
     check(empty.id() == 0U && empty.length() == 0U && empty.verify_crc(),
@@ -175,6 +212,7 @@ int main() {
     test_construction_and_serialization();
     test_round_trip_and_corruption();
     test_invalid_input_and_boundaries();
+    test_error_notification_packets();
     test_defaults_golden_bytes_and_random_round_trips();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

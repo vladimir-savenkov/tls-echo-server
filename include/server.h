@@ -30,6 +30,7 @@ struct ServerStats {
     uint64_t accept_errors = 0;
     uint64_t timed_out = 0;
     uint64_t oversized = 0;
+    uint64_t protocol_errors = 0;
     uint64_t packets_echoed = 0;
     uint64_t bytes_echoed = 0;
     uint64_t active = 0;
@@ -54,6 +55,9 @@ public:
 
 private:
     class Session;
+    // Причина завершения сессии — определяет, какой счётчик статистики
+    // инкрементируется в session_finished.
+    enum class EndReason : std::uint8_t { normal, timed_out, oversize, protocol_error };
     boost::asio::io_context& io_context_;
     boost::asio::strand<boost::asio::io_context::executor_type> control_strand_;
     boost::asio::ip::tcp::acceptor acceptor_;
@@ -70,10 +74,10 @@ private:
     std::size_t consecutive_accept_errors_ = 0;
     bool stopping_ = false;
     std::atomic<uint64_t> accepted_{0}, rejected_{0}, accept_errors_{0}, timed_out_{0},
-        oversized_{0}, packets_echoed_{0}, bytes_echoed_{0}, active_{0};
+        oversized_{0}, protocol_errors_{0}, packets_echoed_{0}, bytes_echoed_{0}, active_{0};
 
     void do_accept();
-    void session_finished(uint64_t id, bool timed_out, bool oversized);
+    void session_finished(uint64_t id, EndReason reason);
 
     class Session : public std::enable_shared_from_this<Session> {
     public:
@@ -81,7 +85,7 @@ private:
                 boost::asio::ssl::context& ssl, std::shared_ptr<spdlog::logger> logger,
                 ServerOptions options, uint64_t session_id,
                 std::atomic<uint64_t>* echoed_packets, std::atomic<uint64_t>* echoed_bytes,
-                std::function<void(bool, bool)> on_finished);
+                std::function<void(EndReason)> on_finished);
         void start();
         void cancel();
     private:
@@ -90,8 +94,11 @@ private:
         void read_header();
         void read_payload();
         void write_response();
+        // Слив отвергнутой нагрузки порциями, затем уведомление и закрытие.
+        void drain_rejected(uint32_t error_code, EndReason reason, uint32_t remaining);
+        void send_error(uint32_t error_code, EndReason reason);
         void shutdown();
-        void finish(bool timed_out = false, bool oversized = false);
+        void finish(EndReason reason = EndReason::normal);
 
         boost::asio::strand<boost::asio::io_context::executor_type> strand_;
         boost::asio::ssl::stream<boost::asio::ip::tcp::socket> socket_;
@@ -103,12 +110,14 @@ private:
         // успешного полного завершения записи ответа.
         std::atomic<uint64_t>* echoed_packets_ = nullptr;
         std::atomic<uint64_t>* echoed_bytes_ = nullptr;
-        std::function<void(bool, bool)> on_finished_;
+        std::function<void(EndReason)> on_finished_;
         // Адрес удалённой стороны фиксируется один раз при создании: позже сокет
         // может закрыться, и endpoint будет недоступен для логов.
         std::string remote_;
         bool finished_ = false;
         std::array<char, sizeof(PacketHeader)> header_buf_{};
+        // Буфер пакета-уведомления; заполняется в send_error перед записью.
+        std::array<char, sizeof(PacketHeader)> error_buf_{};
         std::string payload_buf_;
         uint32_t current_id_ = 0;
         uint16_t expected_len_ = 0;

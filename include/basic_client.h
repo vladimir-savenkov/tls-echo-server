@@ -27,7 +27,8 @@ enum class ClientError : std::uint8_t {
     payload_read_failed,
     invalid_crc,
     unexpected_packet_id,
-    unexpected_payload
+    unexpected_payload,
+    server_rejected
 };
 
 inline const char* client_error_name(ClientError error) {
@@ -41,6 +42,7 @@ inline const char* client_error_name(ClientError error) {
         case ClientError::invalid_crc: return "invalid_crc";
         case ClientError::unexpected_packet_id: return "unexpected_packet_id";
         case ClientError::unexpected_payload: return "unexpected_payload";
+        case ClientError::server_rejected: return "server_rejected";
     }
     return "unknown";
 }
@@ -84,6 +86,7 @@ public:
         packets_received_ = 0;
         packets_to_send_ = count > 0 ? static_cast<uint64_t>(count) : 0;
         error_ = ClientError::none;
+        server_error_code_ = 0;
         complete_ = packets_to_send_ == 0 && options_.duration.count() == 0;
         active_ = !complete_;
         if (state_callback_) {
@@ -103,6 +106,8 @@ public:
     bool complete() const { return complete_; }
     bool active() const { return active_; }
     ClientError error() const { return error_; }
+    // Код из пакета-уведомления; осмыслен при error() == server_rejected.
+    uint32_t server_error_code() const { return server_error_code_; }
     uint64_t bytes_received() const { return bytes_received_; }
     const LatencyStats& latency() const { return latency_; }
 
@@ -166,8 +171,23 @@ private:
                 // падаем сразу; deserialize ниже продублирует проверку.
                 if (wire::from_network16(decoded.magic) != protocol_magic ||
                     decoded.version != protocol_version ||
-                    decoded.flags != protocol_flags_none) {
+                    (decoded.flags & ~protocol_flag_error) != 0) {
                     fail(ClientError::invalid_header);
+                    return;
+                }
+                // Уведомление об ошибке: сервер отверг запрос и закрывает
+                // соединение; нагрузка у уведомления запрещена — payload не читаем.
+                if ((decoded.flags & protocol_flag_error) != 0) {
+                    if (wire::from_network16(decoded.len) != 0) {
+                        fail(ClientError::invalid_header);
+                        return;
+                    }
+                    server_error_code_ = wire::from_network32(decoded.id);
+                    if (state_callback_) {
+                        log_state("server rejected the packet: error=" +
+                                  packet_error_name(server_error_code_));
+                    }
+                    fail(ClientError::server_rejected);
                     return;
                 }
                 const std::size_t payload_size = wire::from_network16(decoded.len);
@@ -291,4 +311,5 @@ private:
     bool active_ = false;
     bool complete_ = false;
     ClientError error_ = ClientError::none;
+    uint32_t server_error_code_ = 0;
 };

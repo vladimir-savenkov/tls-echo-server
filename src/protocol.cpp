@@ -52,10 +52,15 @@ Packet::Packet(uint32_t id, const std::string& payload)
 }
 
 Packet::Packet(uint32_t id, uint16_t len, uint32_t crc,
-               const std::string& payload)
-    : id_(id), crc_(crc), payload_(payload) {
+               const std::string& payload, uint8_t flags)
+    : id_(id), crc_(crc), flags_(flags), payload_(payload) {
     if (len != payload.size()) {
         throw std::invalid_argument("Packet header length does not match payload size");
+    }
+    // Уведомление об ошибке — это код в id без данных: пакет с нагрузкой
+    // нельзя трактовать как уведомление.
+    if ((flags & protocol_flag_error) != 0 && len != 0) {
+        throw std::invalid_argument("Packet error notification must not carry payload");
     }
 }
 
@@ -67,7 +72,7 @@ std::vector<char> Packet::serialize() const {
     PacketHeader header{};
     header.magic = wire::to_network16(protocol_magic);
     header.version = protocol_version;
-    header.flags = protocol_flags_none;
+    header.flags = flags_;
     header.id = wire::to_network32(id_);
     header.len = wire::to_network16(length());
     header.crc = wire::to_network32(crc_);
@@ -98,13 +103,29 @@ Packet Packet::deserialize(const char* raw_header, std::size_t header_size,
     if (header.version != protocol_version) {
         throw std::invalid_argument("Packet header has unsupported protocol version");
     }
-    if (header.flags != protocol_flags_none) {
+    if ((header.flags & ~protocol_flag_error) != 0) {
         throw std::invalid_argument("Packet header has unexpected flags");
     }
     return {wire::from_network32(header.id), wire::from_network16(header.len),
-            wire::from_network32(header.crc), payload};
+            wire::from_network32(header.crc), payload, header.flags};
 }
 
 bool Packet::verify_crc() const {
     return calculate_crc32(payload_.data(), payload_.size()) == crc_;
+}
+
+Packet Packet::make_error(uint32_t error_code) {
+    // Код ошибки — в id; payload пуст, crc пустой нагрузки равен нулю.
+    return {error_code, 0, 0, std::string{}, protocol_flag_error};
+}
+
+std::string packet_error_name(uint32_t error_code) {
+    switch (error_code) {
+        case packet_error_oversize:
+            return "oversize payload";
+        case packet_error_protocol:
+            return "protocol error";
+        default:
+            return "unknown error (code " + std::to_string(error_code) + ")";
+    }
 }

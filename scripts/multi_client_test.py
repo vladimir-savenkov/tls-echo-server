@@ -13,6 +13,9 @@ import zlib
 PROTOCOL_MAGIC = 0x5445
 PROTOCOL_VERSION = 1
 PROTOCOL_FLAGS_NONE = 0
+PROTOCOL_FLAG_ERROR = 0x01
+PACKET_ERROR_OVERSIZE = 1
+PACKET_ERROR_PROTOCOL = 2
 HEADER = struct.Struct("!HBBIHI")
 MAX_PAYLOAD = 0xFFFF
 
@@ -23,6 +26,14 @@ def make_context(ca_cert: str | None, insecure: bool) -> ssl.SSLContext:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
     return context
+
+
+def packet_error_name(code: int) -> str:
+    if code == PACKET_ERROR_OVERSIZE:
+        return "oversize payload"
+    if code == PACKET_ERROR_PROTOCOL:
+        return "protocol error"
+    return f"unknown error (code {code})"
 
 
 def encode_packet(packet_id: int, payload: bytes) -> bytes:
@@ -58,8 +69,14 @@ def receive_packet(connection: ssl.SSLSocket) -> tuple[int, bytes]:
         raise ValueError(
             f"unsupported protocol version: expected {PROTOCOL_VERSION}, got {version}"
         )
-    if flags != PROTOCOL_FLAGS_NONE:
-        raise ValueError(f"unexpected header flags: {flags:#04x}")
+    unknown_flags = flags & ~PROTOCOL_FLAG_ERROR
+    if unknown_flags:
+        raise ValueError(f"unexpected header flags: {unknown_flags:#04x}")
+    if flags & PROTOCOL_FLAG_ERROR:
+        # Error notification: code in the id field, no payload expected.
+        if size != 0:
+            raise ValueError("error notification carries payload")
+        raise ValueError(f"server rejected the packet: {packet_error_name(packet_id)}")
     payload = receive_exact(connection, size)
     actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
     if actual_crc != expected_crc:

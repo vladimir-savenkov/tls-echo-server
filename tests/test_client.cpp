@@ -183,6 +183,48 @@ void test_invalid_responses() {
         check(connection.closed, "protocol mismatch aborts connection");
     }
     {
+        // Уведомление об ошибке: код сохраняется, payload не читается.
+        FakeConnection connection;
+        int completions = 0;
+        ClientError result = ClientError::none;
+        BasicClient<FakeConnection> client(connection, {}, [&](ClientError error) {
+            ++completions;
+            result = error;
+        });
+        client.send_packets(1);
+        connection.complete_write();
+        connection.complete_read(header_of(Packet::make_error(packet_error_oversize)));
+        check(result == ClientError::server_rejected,
+              "server rejection is reported as server_rejected");
+        check(client.server_error_code() == packet_error_oversize,
+              "client keeps the server error code");
+        check(completions == 1, "rejection completes exactly once");
+        check(connection.requested_reads == std::vector<std::size_t>{sizeof(PacketHeader)},
+              "error notification does not read a payload");
+        check(connection.closed, "server rejection aborts the connection");
+    }
+    {
+        FakeConnection connection;
+        BasicClient<FakeConnection> client(connection);
+        client.send_packets(1);
+        connection.complete_write();
+        connection.complete_read(header_of(Packet::make_error(99U)));
+        check(client.error() == ClientError::server_rejected &&
+                  client.server_error_code() == 99U,
+              "unknown server error codes are preserved");
+    }
+    {
+        FakeConnection connection;
+        BasicClient<FakeConnection> client(connection);
+        client.send_packets(1);
+        connection.complete_write();
+        auto header = header_of(Packet::make_error(packet_error_oversize));
+        header[9] = static_cast<char>(0x01);  // len = 1 у уведомления — нагрузка запрещена
+        connection.complete_read(std::move(header));
+        check(client.error() == ClientError::invalid_header,
+              "error notification with payload is rejected");
+    }
+    {
         FakeConnection connection;
         BasicClient<FakeConnection> client(connection);
         client.send_packets(1);

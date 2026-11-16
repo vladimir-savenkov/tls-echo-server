@@ -26,7 +26,13 @@ TlsClient::TlsClient(boost::asio::io_context& io_context,
           }),
       client_(connection_, make_state_logger(logger, client_number),
           [this](ClientError error) {
-              if (error != ClientError::none) finish(client_error_name(error));
+              if (error == ClientError::none) return;
+              if (error == ClientError::server_rejected) {
+                  finish("server rejected the packet: " +
+                         packet_error_name(client_.server_error_code()));
+                  return;
+              }
+              finish(client_error_name(error));
           }, options.run),
       logger_(std::move(logger)), host_(std::move(host)), port_(port),
       client_number_(client_number), options_(options), on_complete_(std::move(on_complete)) {

@@ -21,6 +21,15 @@ inline constexpr uint8_t protocol_version = 1;
 // Зарезервированные флаги заголовка: известное значение 0, неизвестные биты
 // отвергаются, чтобы будущие расширения не трактовались молча.
 inline constexpr uint8_t protocol_flags_none = 0;
+// Бит 0 флагов: пакет — уведомление об ошибке. Поле id несёт код ошибки
+// (packet_error_*), payload пуст: len = 0, crc = CRC пустой нагрузки = 0.
+// Сервер отправляет уведомление перед закрытием соединения, чтобы клиент
+// отличал протокольный отказ от сетевого сбоя.
+inline constexpr uint8_t protocol_flag_error = 0x01;
+// Код ошибки: полезная нагрузка превысила лимит сервера.
+inline constexpr uint32_t packet_error_oversize = 1;
+// Код ошибки: неверный magic, версия или флаги заголовка.
+inline constexpr uint32_t packet_error_protocol = 2;
 
 #pragma pack(push, 1)
 struct PacketHeader {
@@ -36,6 +45,10 @@ struct PacketHeader {
 static_assert(sizeof(PacketHeader) == 14, 
               "PacketHeader must be exactly 14 bytes");
 
+// Человекочитаемое имя кода уведомления — для журналов и CLI; по проводу
+// передаётся только числовой код в поле id.
+std::string packet_error_name(uint32_t error_code);
+
 // ============================================================================
 // 2. Класс Packet (Публичный интерфейс)
 // ============================================================================
@@ -47,8 +60,10 @@ public:
     // Конструктор для отправки (автоматический расчет CRC)
     Packet(uint32_t id, const std::string& payload);
 
-    // Конструктор для приема (данные уже загружены)
-    Packet(uint32_t id, uint16_t len, uint32_t crc, const std::string& payload);
+    // Конструктор для приема (данные уже загружены); флаги берутся из
+    // разобранного заголовка, уведомление об ошибке требует пустую нагрузку.
+    Packet(uint32_t id, uint16_t len, uint32_t crc, const std::string& payload,
+           uint8_t flags = protocol_flags_none);
 
     // Сериализация в буфер для отправки
     std::vector<char> serialize() const;
@@ -56,6 +71,9 @@ public:
     // Десериализация из сырых данных
     static Packet deserialize(const char* raw_header, std::size_t header_size,
                               const std::string& payload);
+
+    // Пакет-уведомление об ошибке: id = код ошибки, payload пуст.
+    static Packet make_error(uint32_t error_code);
 
     // Проверка контрольной суммы
     bool verify_crc() const;
@@ -65,12 +83,14 @@ public:
     uint16_t length() const { return static_cast<uint16_t>(payload_.size()); }
     const std::string& payload() const { return payload_; }
     uint32_t crc() const { return crc_; }
+    uint8_t flags() const { return flags_; }
 
 private:
     void update_crc();
 
     uint32_t id_ = 0;
     uint32_t crc_ = 0;
+    uint8_t flags_ = protocol_flags_none;
     std::string payload_;
 };
 

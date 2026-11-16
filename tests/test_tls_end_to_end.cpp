@@ -214,7 +214,7 @@ void test_server_rejects_corrupted_payload() {
 }
 
 // Несовпадение magic/версии/флагов — протокольная ошибка: сервер обязан
-// закрыть соединение без эха, не дожидаясь payload.
+// отправить уведомление с кодом ошибки и закрыть соединение без эха.
 void test_server_rejects_protocol_header_mismatch() {
     const PemBundle pem = make_self_signed_pem();
     auto logger = make_quiet_debug_logger();
@@ -241,18 +241,40 @@ void test_server_rejects_protocol_header_mismatch() {
 
             std::vector<char> bytes = Packet(100U, "legitimate payload").serialize();
             bytes[offset] = static_cast<char>(bytes[offset] ^ 0xFF);
-            boost::asio::write(raw, boost::asio::buffer(bytes), ec);
+            if (offset == 0) {
+                // Чужой magic: длина недостоверна, сервер ничего не сливает —
+                // пишем только заголовок, чтобы закрытие не состязалось с RST.
+                boost::asio::write(raw,
+                    boost::asio::buffer(bytes.data(), sizeof(PacketHeader)), ec);
+            } else {
+                // Наш magic: сервер сливает заявленную нагрузку и уведомляет.
+                boost::asio::write(raw, boost::asio::buffer(bytes), ec);
+            }
             check(!ec, ("raw client writes the mismatched packet: " + ec.message()).c_str());
+
+            std::array<char, sizeof(PacketHeader)> notification{};
+            boost::asio::read(raw, boost::asio::buffer(notification), ec);
+            check(!ec, "server sends the error notification before closing");
+            PacketHeader decoded{};
+            std::memcpy(&decoded, notification.data(), sizeof(decoded));
+            check(wire::from_network16(decoded.magic) == protocol_magic &&
+                      decoded.version == protocol_version,
+                  "notification uses the current protocol header");
+            check(decoded.flags == protocol_flag_error &&
+                      wire::from_network32(decoded.id) == packet_error_protocol &&
+                      wire::from_network16(decoded.len) == 0,
+                  "notification carries the protocol error code and no payload");
 
             std::array<char, 32> sink{};
             raw.read_some(boost::asio::buffer(sink), ec);
-            check(ec.failed(),
-                  "server closes the connection on a protocol header mismatch");
+            check(ec.failed(), "server closes the connection after the notification");
             raw.lowest_layer().close(ec);
         }
 
         boost::asio::post(io, [&server] { server.stop(); });
         io_thread.join();
+        check(server.stats().protocol_errors == 1,
+              "protocol mismatch is counted in server stats");
     }
 }
 
@@ -282,6 +304,39 @@ void test_client_reports_connect_failure() {
     check(client.failure_reason().rfind("connect:", 0) == 0,
           "failure reason names the connect stage");
 }
+// Отвергнутый сервером запрос обязан дойти до пользователя: настоящий
+// TlsClient с нагрузкой больше лимита сервера завершается с внятной причиной.
+void test_client_reports_server_rejection() {
+    const auto pem = make_self_signed_pem();
+    auto logger = make_quiet_debug_logger();
+
+    boost::asio::io_context io;
+    auto server_ctx = make_server_context(pem);
+    auto client_ctx = make_client_context();
+    ServerOptions options;
+    options.max_payload = 8;
+    TlsServer server(io, server_ctx, 0, logger, options);
+
+    TlsClientOptions client_options;
+    client_options.run.payload_size = 100;
+    int completions = 0;
+    TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1,
+                     client_options, [&] { ++completions; });
+    client.start(1);
+
+    check(wait_for(io, [&client] { return client.finished(); }, std::chrono::seconds(5)),
+          "rejected client finishes");
+    check(!client.succeeded(), "oversized request does not succeed");
+    check(client.packets_received() == 0, "rejected request is not echoed");
+    check(client.failure_reason().find("server rejected the packet: oversize payload") !=
+              std::string::npos,
+          "failure reason names the server rejection");
+    stop_and_drain(io, server);
+    check(completions == 1, "rejection completes exactly once");
+    check(server.stats().oversized == 1, "server counts the rejected payload");
+}
+
+
 // Проверки TLS identity: все сценарии используют тот же реальный сервер.
 void test_certificate_verification() {
     for (int scenario = 0; scenario < 5; ++scenario) {
@@ -349,8 +404,31 @@ void test_server_deadlines_and_limits() {  // NOLINT(readability-function-cognit
                   "raw client finishes handshake");
             if (scenario == 2 || scenario == 3) {
                 auto bytes = Packet(100, scenario == 2 ? "body" : "oversized").serialize();
-                // Передаём только заголовок: сервер ждёт payload или отвергает длину.
-                boost::asio::write(raw, boost::asio::buffer(bytes.data(), sizeof(PacketHeader)));
+                if (scenario == 2) {
+                    // Передаём только заголовок: сервер ждёт payload и закрывается по таймауту.
+                    boost::asio::write(raw,
+                        boost::asio::buffer(bytes.data(), sizeof(PacketHeader)));
+                } else {
+                    // Полный пакет: сервер отвергает длину, сливает payload и
+                    // присылает уведомление об oversize перед закрытием.
+                    boost::asio::write(raw, boost::asio::buffer(bytes));
+                    std::array<char, sizeof(PacketHeader)> notification{};
+                    boost::system::error_code notification_error;
+                    bool notification_received = false;
+                    boost::asio::async_read(raw, boost::asio::buffer(notification),
+                        [&](boost::system::error_code error, std::size_t) {
+                            notification_error = error;
+                            notification_received = true;
+                        });
+                    check(wait_for(io, [&] { return notification_received; },
+                                   std::chrono::seconds(5)),
+                          "oversized request receives the error notification");
+                    PacketHeader decoded{};
+                    std::memcpy(&decoded, notification.data(), sizeof(decoded));
+                    check(!notification_error && decoded.flags == protocol_flag_error &&
+                              wire::from_network32(decoded.id) == packet_error_oversize,
+                          "notification carries the oversize error code");
+                }
             }
             check(wait_for(io, [&] { return server.stats().active == 0; }, std::chrono::seconds(5)),
                   "stalled header/payload or oversized payload is closed");
@@ -704,6 +782,7 @@ int main() {  // NOLINT(bugprone-exception-escape)
     test_server_rejects_corrupted_payload();
     test_server_rejects_protocol_header_mismatch();
     test_client_reports_connect_failure();
+    test_client_reports_server_rejection();
     test_certificate_verification();
     test_server_deadlines_and_limits();
     test_client_deadlines();
