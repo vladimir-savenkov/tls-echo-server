@@ -81,7 +81,10 @@ jobs:
           package="tls-echo-server-${RELEASE_TAG}-linux-x86_64"
           cmake --install build --prefix "dist/${package}"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
-          sha256sum "dist/${package}.tar.gz" > "dist/${package}.tar.gz.sha256"
+          # Чексумма пишется из dist/, чтобы файл содержал голое имя архива:
+          # иначе в нём окажется префикс dist/ и sha256sum -c у скачавшего
+          # не найдёт файл.
+          (cd dist && sha256sum "${package}.tar.gz" > "${package}.tar.gz.sha256")
 
       - name: Upload release assets
         env:
