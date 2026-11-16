@@ -104,16 +104,22 @@ TSAN_OPTIONS=halt_on_error=1:exitcode=66 python3 scripts/sanitizer_smoke.py buil
 Windows-архив собирается MSVC со статическим triplet `x64-windows-static`,
 поэтому exe не требуют DLL OpenSSL/Boost/spdlog рядом.
 
-Чтобы создать новый релиз, создайте аннотированный тег и отправьте его в GitHub:
+Чтобы создать новый релиз, поднимите версию скриптом и отправьте коммит и тег
+в GitHub:
 
 ```bash
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
+scripts/bump-version.sh 1.0.1   # версия в CMakeLists.txt и vcpkg.json + тег v1.0.1
+git push origin master && git push origin v1.0.1
 ```
 
+Версия хранится в трёх местах: тег `vX.Y.Z`, `project(... VERSION ...)` в
+`CMakeLists.txt` и `version-string` в `vcpkg.json`. Release workflow проверяет
+их совпадение и падает при рассинхроне до начала сборок — поэтому версию
+поднимайте скриптом, а не вручную.
+
 После отправки тега GitHub Actions запустит Release workflow и опубликует
-архивы в разделе GitHub Releases. Номер версии в имени тега следует менять для
-каждого следующего релиза, например `v1.0.1` или `v1.1.0`.
+архивы в разделе GitHub Releases. Номер версии следует менять для каждого
+следующего релиза по semver, например `v1.0.1` или `v1.1.0`.
 
 ## Как запустить
 

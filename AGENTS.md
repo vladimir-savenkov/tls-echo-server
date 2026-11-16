@@ -111,7 +111,9 @@
 - `scripts/` — `generate-certs.sh` (самоподписанный сертификат),
   `sanitizer_smoke.py` (прогон сервера и клиента под санитайзерами),
   `msan_packet_test.sh`, `coverage.sh`, `multi_client_test.py`,
-  `interactive_client.py`.
+  `interactive_client.py`, `bump-version.sh` (поднимает версию в
+  `CMakeLists.txt` и `vcpkg.json`, коммитит и создаёт аннотированный тег;
+  пуш — вручную).
 - `CMakeLists.txt` — единственный файл сборки: библиотека `protocol`
   (`src/protocol.cpp`), статическая `tls_core` (сетевое ядро:
   `src/server.cpp` + `src/client.cpp`, общая для боевых бинарников и
@@ -248,8 +250,12 @@ MSan применяется только к коду пакетов (`src/protoc
   `tls-echo-server-<tag>-windows-x86_64.zip` + SHA-256, публикация в GitHub
   Releases через `gh`. Windows-задача использует статический triplet
   `x64-windows-static`: exe самодостаточны, без DLL зависимостей (в отличие
-  от динамического `x64-windows` в Debug-задаче ci.yml). Новый релиз —
-  аннотированный тег: `git tag -a v1.0.1 -m "..." && git push origin v1.0.1`.
+  от динамического `x64-windows` в Debug-задаче ci.yml). Задача
+  `create-release` также проверяет, что тег совпадает с `project(VERSION)`
+  в `CMakeLists.txt` и `version-string` в `vcpkg.json` — при рассинхроне
+  релиз падает до сборок. Новый релиз — через `scripts/bump-version.sh
+  X.Y.Z` (бамп версии в обоих файлах + коммит + аннотированный тег),
+  затем `git push origin master && git push origin vX.Y.Z`.
 
 ## Соглашения по стилю
 

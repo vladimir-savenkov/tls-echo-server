@@ -24,6 +24,25 @@ jobs:
     name: Create GitHub release
     runs-on: ubuntu-24.04
     steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      # Тег — источник имён артефактов, поэтому project(VERSION) и
+      # vcpkg.json version-string обязаны ему соответствовать: проверяем
+      # до публикации, пока рассинхрон не ушёл в релиз.
+      - name: Verify version matches the tag
+        run: |
+          version="${RELEASE_TAG#v}"
+          cmake_version=$(sed -n -E 's/^project\(tls_echo_server VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          vcpkg_version=$(sed -n -E 's/^  "version-string": "([0-9.]+)",/\1/p' vcpkg.json)
+          echo "Tag: ${version}, CMakeLists.txt: ${cmake_version}, vcpkg.json: ${vcpkg_version}"
+          if [[ "${cmake_version}" != "${version}" || "${vcpkg_version}" != "${version}" ]]; then
+            echo "::error::Version mismatch: tag ${RELEASE_TAG}, CMakeLists.txt ${cmake_version}, vcpkg.json ${vcpkg_version}. Use scripts/bump-version.sh to bump."
+            exit 1
+          fi
+
       - name: Create release if missing
         env:
           GH_TOKEN: ${{ github.token }}
