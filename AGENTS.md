@@ -269,8 +269,10 @@ bash scripts/fuzz_packet.sh 60   # аргумент — лимит секунд 
   и Windows, упаковка `tls-echo-server-<tag>-linux-x86_64.tar.gz` и
   `tls-echo-server-<tag>-windows-x86_64.zip` + SHA-256, публикация в GitHub
   Releases через `gh`. Windows-задача использует статический triplet
-  `x64-windows-static`: exe самодостаточны, без DLL зависимостей (в отличие
-  от динамического `x64-windows` в Debug-задаче ci.yml). Задача
+  `x64-windows-static` + `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`
+  (статический CRT /MT — обязателен для этого triplet, иначе LNK2038):
+  exe самодостаточны, без DLL зависимостей (в отличие от динамического
+  `x64-windows` в Debug-задаче ci.yml). Задача
   `create-release` также проверяет, что тег совпадает с `project(VERSION)`
   в `CMakeLists.txt` и `version-string` в `vcpkg.json` — при рассинхроне
   релиз падает до сборок. Новый релиз — через `scripts/bump-version.sh

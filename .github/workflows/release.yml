@@ -106,12 +106,16 @@ jobs:
 
       # Статический triplet: exe в архиве самодостаточны, без DLL
       # OpenSSL/Boost/spdlog рядом (в отличие от Debug-сборки в ci.yml).
+      # CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded (статический CRT /MT)
+      # обязателен: triplet собран с /MT, иначе линковка падает с LNK2038
+      # (mismatch RuntimeLibrary MT vs MD).
       - name: Configure release build
         shell: pwsh
         run: >-
           cmake -S . -B build/windows -A x64
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 
       - name: Build and test
         run: |
