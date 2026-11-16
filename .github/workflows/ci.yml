@@ -164,6 +164,33 @@ jobs:
       - name: Run packet tests with MemorySanitizer
         run: bash scripts/msan_packet_test.sh "$RUNNER_TEMP/msan-libcxx"
 
+  # libFuzzer по парсеру пакетов: тот же контур, что MSan (src/protocol.cpp),
+  # но с генерацией входов. Краши (crash-*) публикуются как артефакт;
+  # воспроизведение: build/fuzz/fuzz_packet <crash-файл>.
+  fuzz:
+    name: fuzz / packet parser
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang python3
+
+      - name: Fuzz packet parser
+        run: bash scripts/fuzz_packet.sh 60
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crash-artifacts
+          path: build/fuzz/crash-*
+          if-no-files-found: ignore
+
   coverage:
     name: coverage / Debug
     runs-on: ubuntu-24.04

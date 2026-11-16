@@ -108,9 +108,12 @@
 - `src/` — `main.cpp` (точка входа сервера), `server.cpp`, `main_client.cpp`
   (точка входа клиента), `client.cpp`, `protocol.cpp`.
 - `tests/` — шесть самодостаточных тестов (без фреймворка, см. ниже).
+- `fuzz/` — `fuzz_packet.cpp`, точка входа libFuzzer для парсера пакетов
+  (см. «Фаззинг»).
 - `scripts/` — `generate-certs.sh` (самоподписанный сертификат),
   `sanitizer_smoke.py` (прогон сервера и клиента под санитайзерами),
-  `msan_packet_test.sh`, `coverage.sh`, `multi_client_test.py`,
+  `msan_packet_test.sh`, `fuzz_packet.sh` (сборка и прогон libFuzzer-цели),
+  `coverage.sh`, `multi_client_test.py`,
   `interactive_client.py`, `bump-version.sh` (поднимает версию в
   `CMakeLists.txt` и `vcpkg.json`, коммитит и создаёт аннотированный тег;
   пуш — вручную).
@@ -236,11 +239,28 @@ MSan применяется только к коду пакетов (`src/protoc
 скрипт с префиксом). Сервер и клиент под MSan не проверяются: для
 достоверности пришлось бы инструментировать Boost, OpenSSL и spdlog.
 
+## Фаззинг
+
+Парсер пакетов фаззится libFuzzer'ом (тот же контур, что у MSan —
+`src/protocol.cpp`, цель `fuzz/fuzz_packet.cpp`). Вход трактуется как сырой
+кадр (заголовок 14 байт + нагрузка); цель проверяет, что принятый пакет
+сериализуется обратно байт в байт, а `packet_error_name`/`calculate_crc32`
+не падают на любых данных. Сборка Clang с `-fsanitize=fuzzer,address`,
+сидовый корпус генерируется скриптом в `build/fuzz/corpus`:
+
+```bash
+bash scripts/fuzz_packet.sh 60   # аргумент — лимит секунд (по умолчанию 60)
+```
+
+Найденные падения сохраняются как `build/fuzz/crash-*`; воспроизведение:
+`build/fuzz/fuzz_packet <crash-файл>`.
+
 ## CI/CD и релизы
 
 - `ci.yml` срабатывает на push и PR в `master` и вручную: матрица
   GCC/Clang Debug с флагами `-Wall -Wextra -Wpedantic -Werror`, задача Windows/MSVC с vcpkg, задачи
-  санитайзеров (address, thread), MSan-задача, задача покрытия
+  санитайзеров (address, thread), MSan-задача, fuzz-задача (libFuzzer по
+  парсеру пакетов, 60 с; краши публикуются артефактом), задача покрытия
   (публикует `coverage.md` в summary), проверка `py_compile` для
   `scripts/*.py` и `bash -n` для `scripts/*.sh`.
 - `release.yml` срабатывает на тег `v*` (и вручную): задача `create-release`

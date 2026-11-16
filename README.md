@@ -97,6 +97,11 @@ TSAN_OPTIONS=halt_on_error=1:exitcode=66 python3 scripts/sanitizer_smoke.py buil
 `bash scripts/msan_packet_test.sh /путь/к/msan-libcxx`. Команды сборки libc++
 приведены в задаче `memory-sanitizer` файла `.github/workflows/ci.yml`.
 
+Парсер пакетов также фаззится libFuzzer'ом (задача `fuzz` в CI, 60 секунд).
+Локальный запуск — `bash scripts/fuzz_packet.sh 60`; найденные падения
+сохраняются в `build/fuzz/crash-*` и воспроизводятся командой
+`build/fuzz/fuzz_packet <crash-файл>`.
+
 Тег вида `v1.0.0` запускает Release workflow: он собирает и тестирует проект
 на Linux и Windows, затем публикует в GitHub Releases архивы
 `tls-echo-server-<тег>-linux-x86_64.tar.gz` и
