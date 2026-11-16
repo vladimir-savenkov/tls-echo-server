@@ -2,7 +2,7 @@
 # Поднимает версию проекта в CMakeLists.txt (project VERSION) и vcpkg.json
 # (version-string), коммитит оба файла и создаёт аннотированный тег vX.Y.Z.
 # Тег НЕ отправляется в origin — публикация вручную:
-#   git push origin master && git push origin vX.Y.Z
+#   git push origin master --follow-tags
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -46,4 +46,6 @@ git commit -m "Поднять версию до ${version}"
 git tag -a "${tag}" -m "Release ${tag}"
 
 echo "Version bumped to ${version}, annotated tag ${tag} created."
-echo "Publish with: git push origin master && git push origin ${tag}"
+# --follow-tags отправляет аннотированные теги отправляемых коммитов: тег
+# создан выше на коммите бампа, поэтому ветка и тег уходят одной командой.
+echo "Publish with: git push origin master --follow-tags"

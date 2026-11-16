@@ -255,7 +255,7 @@ MSan применяется только к коду пакетов (`src/protoc
   в `CMakeLists.txt` и `version-string` в `vcpkg.json` — при рассинхроне
   релиз падает до сборок. Новый релиз — через `scripts/bump-version.sh
   X.Y.Z` (бамп версии в обоих файлах + коммит + аннотированный тег),
-  затем `git push origin master && git push origin vX.Y.Z`.
+  затем `git push origin master --follow-tags` (тег уезжает вместе с веткой).
 
 ## Соглашения по стилю
 

@@ -109,7 +109,7 @@ Windows-архив собирается MSVC со статическим triplet
 
 ```bash
 scripts/bump-version.sh 1.0.1   # версия в CMakeLists.txt и vcpkg.json + тег v1.0.1
-git push origin master && git push origin v1.0.1
+git push origin master --follow-tags   # ветка и аннотированный тег одной командой
 ```
 
 Версия хранится в трёх местах: тег `vX.Y.Z`, `project(... VERSION ...)` в
