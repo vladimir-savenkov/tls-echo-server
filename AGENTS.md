@@ -241,10 +241,15 @@ MSan применяется только к коду пакетов (`src/protoc
   санитайзеров (address, thread), MSan-задача, задача покрытия
   (публикует `coverage.md` в summary), проверка `py_compile` для
   `scripts/*.py` и `bash -n` для `scripts/*.sh`.
-- `release.yml` срабатывает на тег `v*` (и вручную): Release-сборка,
-  тесты, упаковка `tls-echo-server-<tag>-linux-x86_64.tar.gz` + SHA-256,
-  публикация в GitHub Releases через `gh`. Новый релиз — аннотированный
-  тег: `git tag -a v1.0.1 -m "..." && git push origin v1.0.1`.
+- `release.yml` срабатывает на тег `v*` (и вручную): задача `create-release`
+  создаёт релиз один раз (до параллельных сборок, иначе задачи конкурентно
+  вызвали бы `gh release create`), затем Release-сборка и тесты на Linux
+  и Windows, упаковка `tls-echo-server-<tag>-linux-x86_64.tar.gz` и
+  `tls-echo-server-<tag>-windows-x86_64.zip` + SHA-256, публикация в GitHub
+  Releases через `gh`. Windows-задача использует статический triplet
+  `x64-windows-static`: exe самодостаточны, без DLL зависимостей (в отличие
+  от динамического `x64-windows` в Debug-задаче ci.yml). Новый релиз —
+  аннотированный тег: `git tag -a v1.0.1 -m "..." && git push origin v1.0.1`.
 
 ## Соглашения по стилю
 

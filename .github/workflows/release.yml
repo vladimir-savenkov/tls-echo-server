@@ -14,11 +14,28 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
 jobs:
-  build-test-release:
+  # Релиз создаётся один раз до параллельных сборок: иначе задачи Linux и
+  # Windows конкурентно вызвали бы `gh release create` и одна из них упала.
+  create-release:
+    name: Create GitHub release
     runs-on: ubuntu-24.04
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Create release if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --verify-tag --generate-notes
+          fi
+
+  build-linux:
+    name: Linux / Release
+    runs-on: ubuntu-24.04
+    needs: create-release
 
     steps:
       - name: Check out release tag
@@ -47,15 +64,58 @@ jobs:
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
           sha256sum "dist/${package}.tar.gz" > "dist/${package}.tar.gz.sha256"
 
-      - name: Publish GitHub release
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           package="tls-echo-server-${RELEASE_TAG}-linux-x86_64"
-          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" --verify-tag --generate-notes
-          fi
           gh release upload "${RELEASE_TAG}" \
             "dist/${package}.tar.gz" \
             "dist/${package}.tar.gz.sha256" \
+            --clobber
+
+  build-windows:
+    name: Windows / MSVC Release
+    runs-on: windows-2025
+    needs: create-release
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      # Статический triplet: exe в архиве самодостаточны, без DLL
+      # OpenSSL/Boost/spdlog рядом (в отличие от Debug-сборки в ci.yml).
+      - name: Configure release build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build/windows -A x64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      - name: Build and test
+        run: |
+          cmake --build build/windows --config Release --parallel 2
+          ctest --test-dir build/windows -C Release --output-on-failure
+
+      - name: Install and package
+        shell: pwsh
+        run: |
+          $package = "tls-echo-server-$env:RELEASE_TAG-windows-x86_64"
+          cmake --install build/windows --config Release --prefix "dist/$package"
+          Compress-Archive -Path "dist/$package" -DestinationPath "dist/$package.zip"
+          # Формат файла совпадает с выводом sha256sum: "<hash>  <имя>".
+          $hash = (Get-FileHash "dist/$package.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $package.zip" | Out-File -FilePath "dist/$package.zip.sha256" -Encoding ascii
+
+      - name: Upload release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = "tls-echo-server-$env:RELEASE_TAG-windows-x86_64"
+          gh release upload "$env:RELEASE_TAG" `
+            "dist/$package.zip" `
+            "dist/$package.zip.sha256" `
             --clobber

@@ -97,8 +97,12 @@ TSAN_OPTIONS=halt_on_error=1:exitcode=66 python3 scripts/sanitizer_smoke.py buil
 `bash scripts/msan_packet_test.sh /путь/к/msan-libcxx`. Команды сборки libc++
 приведены в задаче `memory-sanitizer` файла `.github/workflows/ci.yml`.
 
-Тег вида `v1.0.0` запускает Release workflow: он собирает и тестирует проект,
-затем публикует Linux-архив и контрольную сумму SHA-256 в GitHub Releases.
+Тег вида `v1.0.0` запускает Release workflow: он собирает и тестирует проект
+на Linux и Windows, затем публикует в GitHub Releases архивы
+`tls-echo-server-<тег>-linux-x86_64.tar.gz` и
+`tls-echo-server-<тег>-windows-x86_64.zip` с контрольными суммами SHA-256.
+Windows-архив собирается MSVC со статическим triplet `x64-windows-static`,
+поэтому exe не требуют DLL OpenSSL/Boost/spdlog рядом.
 
 Чтобы создать новый релиз, создайте аннотированный тег и отправьте его в GitHub:
 
@@ -108,7 +112,7 @@ git push origin v1.0.0
 ```
 
 После отправки тега GitHub Actions запустит Release workflow и опубликует
-архив в разделе GitHub Releases. Номер версии в имени тега следует менять для
+архивы в разделе GitHub Releases. Номер версии в имени тега следует менять для
 каждого следующего релиза, например `v1.0.1` или `v1.1.0`.
 
 ## Как запустить
