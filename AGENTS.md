@@ -107,13 +107,15 @@
   `log_payload.h`, `wire.h`, `operation_deadline.h`, `latency_stats.h`.
 - `src/` — `main.cpp` (точка входа сервера), `server.cpp`, `main_client.cpp`
   (точка входа клиента), `client.cpp`, `protocol.cpp`.
-- `tests/` — пять самодостаточных тестов (без фреймворка, см. ниже).
+- `tests/` — шесть самодостаточных тестов (без фреймворка, см. ниже).
 - `scripts/` — `generate-certs.sh` (самоподписанный сертификат),
   `sanitizer_smoke.py` (прогон сервера и клиента под санитайзерами),
   `msan_packet_test.sh`, `coverage.sh`, `multi_client_test.py`,
   `interactive_client.py`.
-- `CMakeLists.txt` — единственный файл сборки: статическая библиотека
-  `protocol`, исполняемые файлы `server` и `client`, пять тестов.
+- `CMakeLists.txt` — единственный файл сборки: библиотека `protocol`
+  (`src/protocol.cpp`), статическая `tls_core` (сетевое ядро:
+  `src/server.cpp` + `src/client.cpp`, общая для боевых бинарников и
+  сквозного теста), исполняемые файлы `server` и `client`, шесть тестов.
 - `CMakePresets.json` — пресеты vcpkg для Windows/Linux (Debug/Release),
   рабочий процесс Visual Studio «Open Folder».
 - `.github/workflows/` — `ci.yml` (CI) и `release.yml` (публикация релизов).
@@ -177,8 +179,9 @@ CLI создаёт контексты до начала измерения; мн
 Тестового фреймворка нет: каждый тест — программа с `main()`, где функция
 `check()` считает ошибки, а ненулевой код выхода означает провал. Запуск —
 через CTest (`ctest --test-dir build --output-on-failure`), имена тестов:
-`packet_tests`, `client_tests`, `client_integration_tests`,
-`log_payload_tests`, `tls_end_to_end_tests` (сетевые тесты имеют таймаут 30 с).
+`packet_tests`, `client_tests`, `operation_deadline_tests`,
+`client_integration_tests`, `log_payload_tests`, `tls_end_to_end_tests`
+(таймаут 30 с задан для сетевых тестов и `operation_deadline_tests`).
 
 - `tests/test_packet.cpp` — CRC32 (контрольные векторы), сериализация
   (golden-bytes формат), десериализация, граничные случаи, случайные
@@ -186,7 +189,12 @@ CLI создаёт контексты до начала измерения; мн
 - `tests/test_client.cpp` — юнит-тесты `BasicClient` на `FakeConnection`
   (без сети): порядок запрос/ответ, ошибки транспорта, повреждённые
   ответы, повторный вызов, неверный echo с корректным CRC, abort,
-  единственное уведомление, размеры 0/65535, режим длительности и гистограммы.
+  единственное уведомление, размеры 0/65535, режим длительности, окно
+  pipelining и гистограммы.
+- `tests/test_operation_deadline.cpp` — юнит-тест `OperationDeadline`
+  (без сети, только таймеры): поколенческая защита — отмена таймера
+  повышает поколение, и готовый callback старого таймера не отменяет
+  следующую операцию.
 - `tests/test_client_integration.cpp` — `BasicClient` против реального
   TCP-echo на loopback, включая фрагментированные ответы (по байту).
 - `tests/test_log_payload.cpp` — экранирование полезной нагрузки.
