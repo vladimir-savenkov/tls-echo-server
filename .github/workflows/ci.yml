@@ -80,6 +80,24 @@ jobs:
       - name: Run clang-tidy
         run: clang-tidy -p build $(git ls-files 'src/*.cpp' 'tests/*.cpp')
 
+  clang-format:
+    name: clang-format / style
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-format
+
+      # Стиль задан .clang-format в корне; на ubuntu-24.04 пакет
+      # clang-format — это clang-format-18, под него подобрана конфигурация.
+      - name: Check formatting
+        run: clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h')
+
   sanitizers:
     name: ${{ matrix.sanitizer }} / Debug
     runs-on: ubuntu-24.04

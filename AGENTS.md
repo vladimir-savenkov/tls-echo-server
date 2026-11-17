@@ -261,7 +261,8 @@ bash scripts/fuzz_packet.sh 60   # аргумент — лимит секунд 
   GCC/Clang Debug с флагами `-Wall -Wextra -Wpedantic -Werror`, задача Windows/MSVC с vcpkg, задачи
   санитайзеров (address, thread), MSan-задача, fuzz-задача (libFuzzer по
   парсеру пакетов, 60 с; краши публикуются артефактом), задача покрытия
-  (публикует `coverage.md` в summary), проверка `py_compile` для
+  (публикует `coverage.md` в summary), задача clang-format (проверка стиля
+  по `.clang-format`, clang-format-18), проверка `py_compile` для
   `scripts/*.py` и `bash -n` для `scripts/*.sh`.
 - `release.yml` срабатывает на тег `v*` (и вручную): задача `create-release`
   создаёт релиз один раз (до параллельных сборок, иначе задачи конкурентно
@@ -283,6 +284,10 @@ bash scripts/fuzz_packet.sh 60   # аргумент — лимит секунд 
 
 - Стандарт — C++17; CI собирает с `-Wall -Wextra -Wpedantic -Werror`,
   предупреждения недопустимы.
+- Стиль кода формализован в `.clang-format` (база Google: 4 пробела,
+  100 колонок, `case` с отступом, `#include` не сортируются) и проверяется
+  задачей clang-format в CI (clang-format-18). Перед коммитом прогоняйте
+  `clang-format -i` по изменённым файлам.
 - Комментарии в коде — на русском; сообщения в `std::cout`/`std::cerr`
   и строки журналов (logger->info/warn/...) — на английском: журналы
   парсятся инструментами и читаются в mix-окружениях. Справка `--help`
