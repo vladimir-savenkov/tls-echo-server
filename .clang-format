@@ -1,0 +1,19 @@
+# Стиль кода проекта (см. «Соглашения по стилю» в AGENTS.md).
+# База — Google, подстроенная под фактический стиль кодовой базы:
+# 4 пробела, 100 колонок, модификаторы доступа без отступа, метки case
+# с отступом. Проверяется задачей clang-format в CI (clang-format-18).
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+IndentCaseLabels: true
+DerivePointerAlignment: false
+PointerAlignment: Left
+# Порядок #include в проекте осмысленный (свои заголовки, boost, std);
+# автосортировка дала бы массовый бессодержательный diff.
+SortIncludes: Never
+# Списки инициализации конструкторов упаковываются по ширине строки,
+# как принято в коде, а не по одному члену на строку.
+PackConstructorInitializers: BinPack
+# Тривиальные case-ветки в одну строку: case X: return "...";.
+AllowShortCaseLabelsOnASingleLine: true

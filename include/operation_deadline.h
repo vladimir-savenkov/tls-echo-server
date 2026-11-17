@@ -18,8 +18,8 @@ public:
         const auto generation = ++generation_;
         expired_ = false;
         timer_.expires_after(timeout);
-        timer_.async_wait([this, generation, handler = std::move(handler)](
-                             boost::system::error_code error) mutable {
+        timer_.async_wait([this, generation,
+                           handler = std::move(handler)](boost::system::error_code error) mutable {
             if (!error && generation == generation_) {
                 expired_ = true;
                 handler();

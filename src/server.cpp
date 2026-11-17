@@ -24,12 +24,13 @@ constexpr std::size_t drain_chunk_size = 4096;
 
 }  // namespace
 
-TlsServer::TlsServer(boost::asio::io_context& io_context,
-                    boost::asio::ssl::context& ssl_context, unsigned short port,
-                    std::shared_ptr<spdlog::logger> logger, ServerOptions options)
+TlsServer::TlsServer(boost::asio::io_context& io_context, boost::asio::ssl::context& ssl_context,
+                     unsigned short port, std::shared_ptr<spdlog::logger> logger,
+                     ServerOptions options)
     : io_context_(io_context), control_strand_(boost::asio::make_strand(io_context)),
       acceptor_(io_context), ssl_context_(ssl_context), logger_(std::move(logger)),
-      drain_timer_(control_strand_), retry_timer_(control_strand_), options_(std::move(options)), port_(port) {
+      drain_timer_(control_strand_), retry_timer_(control_strand_), options_(std::move(options)),
+      port_(port) {
     if (options_.max_connections == 0 || options_.max_payload > 65535 ||
         options_.operation_timeout.count() <= 0 || options_.shutdown_timeout.count() <= 0) {
         throw std::invalid_argument("Invalid server limits or timeouts");
@@ -37,8 +38,8 @@ TlsServer::TlsServer(boost::asio::io_context& io_context,
     // Семейство сокета определяется адресом привязки; по умолчанию это IPv4
     // 0.0.0.0 — прежнее поведение. IPv6-адрес включает dual-stack: один
     // сокет принимает соединения обоих семейств.
-    const auto protocol = options_.bind_address.is_v6() ? boost::asio::ip::tcp::v6()
-                                                        : boost::asio::ip::tcp::v4();
+    const auto protocol =
+        options_.bind_address.is_v6() ? boost::asio::ip::tcp::v6() : boost::asio::ip::tcp::v4();
     try {
         acceptor_.open(protocol);
         if (options_.bind_address.is_v6()) {
@@ -50,8 +51,8 @@ TlsServer::TlsServer(boost::asio::io_context& io_context,
     } catch (const boost::system::system_error& error) {
         // Недоступный на хосте адрес привязки — ошибка конфигурации, а не
         // откат на другой адрес: пользователь должен увидеть точную причину.
-        throw std::runtime_error("cannot bind " + options_.bind_address.to_string() +
-                                 ": " + error.code().message());
+        throw std::runtime_error("cannot bind " + options_.bind_address.to_string() + ": " +
+                                 error.code().message());
     }
     port_ = acceptor_.local_endpoint().port();
     logger_->info("Server starting on port {}", port_);
@@ -66,8 +67,8 @@ TlsServer::~TlsServer() {
 void TlsServer::run() { io_context_.run(); }
 
 ServerStats TlsServer::stats() const {
-    return {accepted_.load(), rejected_.load(), accept_errors_.load(),
-            timed_out_.load(), oversized_.load(), protocol_errors_.load(),
+    return {accepted_.load(),       rejected_.load(),     accept_errors_.load(),
+            timed_out_.load(),      oversized_.load(),    protocol_errors_.load(),
             packets_echoed_.load(), bytes_echoed_.load(), active_.load()};
 }
 
@@ -107,17 +108,10 @@ void TlsServer::session_finished(uint64_t id, EndReason reason) {
         sessions_.erase(id);
         active_ = sessions_.size();
         switch (reason) {
-            case EndReason::normal:
-                break;
-            case EndReason::timed_out:
-                ++timed_out_;
-                break;
-            case EndReason::oversize:
-                ++oversized_;
-                break;
-            case EndReason::protocol_error:
-                ++protocol_errors_;
-                break;
+            case EndReason::normal: break;
+            case EndReason::timed_out: ++timed_out_; break;
+            case EndReason::oversize: ++oversized_; break;
+            case EndReason::protocol_error: ++protocol_errors_; break;
         }
         if (stopping_ && sessions_.empty()) {
             drain_timer_.cancel();
@@ -126,7 +120,8 @@ void TlsServer::session_finished(uint64_t id, EndReason reason) {
 }
 
 void TlsServer::do_accept() {
-    acceptor_.async_accept(boost::asio::bind_executor(control_strand_,
+    acceptor_.async_accept(boost::asio::bind_executor(
+        control_strand_,
         [this](boost::system::error_code error, boost::asio::ip::tcp::socket socket) {
             if (stopping_) return;
             if (error) {
@@ -140,7 +135,7 @@ void TlsServer::do_accept() {
                 ++accept_errors_;
                 if (first || consecutive_accept_errors_ % 10 == 0) {
                     logger_->error("Accept error (attempt {}): {}; retrying in {} ms",
-                        consecutive_accept_errors_, error.message(), delay.count());
+                                   consecutive_accept_errors_, error.message(), delay.count());
                 }
                 retry_timer_.expires_after(delay);
                 retry_timer_.async_wait([this](boost::system::error_code timer_error) {
@@ -156,11 +151,10 @@ void TlsServer::do_accept() {
                 socket.close(ignored);
             } else {
                 const auto id = ++next_session_;
-                auto session = std::make_shared<Session>(io_context_, std::move(socket),
-                    ssl_context_, logger_, options_, id, &packets_echoed_, &bytes_echoed_,
-                    [this, id](EndReason reason) {
-                        session_finished(id, reason);
-                    });
+                auto session = std::make_shared<Session>(
+                    io_context_, std::move(socket), ssl_context_, logger_, options_, id,
+                    &packets_echoed_, &bytes_echoed_,
+                    [this, id](EndReason reason) { session_finished(id, reason); });
                 sessions_.emplace(id, session);
                 ++accepted_;
                 active_ = sessions_.size();
@@ -171,26 +165,27 @@ void TlsServer::do_accept() {
 }
 
 TlsServer::Session::Session(boost::asio::io_context& io, boost::asio::ip::tcp::socket socket,
-                           boost::asio::ssl::context& ssl,
-                           std::shared_ptr<spdlog::logger> logger, ServerOptions options,
-                           uint64_t session_id,
-                           std::atomic<uint64_t>* echoed_packets, std::atomic<uint64_t>* echoed_bytes,
-                           std::function<void(EndReason)> on_finished)
-    : strand_(boost::asio::make_strand(io)), socket_(std::move(socket), ssl),
-      deadline_(strand_), logger_(std::move(logger)), options_(std::move(options)),
-      session_id_(session_id), echoed_packets_(echoed_packets), echoed_bytes_(echoed_bytes),
+                            boost::asio::ssl::context& ssl, std::shared_ptr<spdlog::logger> logger,
+                            ServerOptions options, uint64_t session_id,
+                            std::atomic<uint64_t>* echoed_packets,
+                            std::atomic<uint64_t>* echoed_bytes,
+                            std::function<void(EndReason)> on_finished)
+    : strand_(boost::asio::make_strand(io)), socket_(std::move(socket), ssl), deadline_(strand_),
+      logger_(std::move(logger)), options_(std::move(options)), session_id_(session_id),
+      echoed_packets_(echoed_packets), echoed_bytes_(echoed_bytes),
       on_finished_(std::move(on_finished)) {
     boost::system::error_code endpoint_error;
     const auto remote = socket_.lowest_layer().remote_endpoint(endpoint_error);
-    if (!endpoint_error) remote_ = remote.address().to_string() + ":" + std::to_string(remote.port());
+    if (!endpoint_error)
+        remote_ = remote.address().to_string() + ":" + std::to_string(remote.port());
     // TCP_NODELAY: без него алгоритм Нагла придерживает хвостовые сегменты
     // ответов до ACK клиента, и паузы delayed-ACK ядра (до 40 мс на Linux,
     // 200 мс на Windows) попадают в измеряемые задержки echo.
     boost::system::error_code nodelay_error;
     socket_.lowest_layer().set_option(boost::asio::ip::tcp::no_delay(true), nodelay_error);
     if (nodelay_error) {
-        logger_->warn("Session {}: cannot disable Nagle algorithm: {}",
-                      session_id_, nodelay_error.message());
+        logger_->warn("Session {}: cannot disable Nagle algorithm: {}", session_id_,
+                      nodelay_error.message());
     } else {
         logger_->debug("Session {} TCP_NODELAY enabled", session_id_);
     }
@@ -199,8 +194,8 @@ TlsServer::Session::Session(boost::asio::io_context& io, boost::asio::ip::tcp::s
 void TlsServer::Session::arm(const char* stage) {
     logger_->debug("Session {} ({}): {} scheduled", session_id_, remote_, stage);
     deadline_.arm(options_.operation_timeout, [self = shared_from_this(), stage] {
-        self->logger_->warn("Session {} ({}): {} timed out",
-                            self->session_id_, self->remote_, stage);
+        self->logger_->warn("Session {} ({}): {} timed out", self->session_id_, self->remote_,
+                            stage);
         self->finish(EndReason::timed_out);
     });
 }
@@ -209,8 +204,8 @@ bool TlsServer::Session::failed(boost::system::error_code error) {
     deadline_.cancel();
     if (finished_) return true;
     if (error) {
-        logger_->debug("Session {} ({}): operation failed: {}",
-                       session_id_, remote_, error.message());
+        logger_->debug("Session {} ({}): operation failed: {}", session_id_, remote_,
+                       error.message());
         finish();
         return true;
     }
@@ -234,9 +229,9 @@ void TlsServer::Session::start() {
     boost::asio::dispatch(strand_, [self = shared_from_this()] {
         if (self->finished_) return;
         self->arm("TLS handshake");
-        self->socket_.async_handshake(boost::asio::ssl::stream_base::server,
-            boost::asio::bind_executor(self->strand_,
-            [self](boost::system::error_code error) {
+        self->socket_.async_handshake(
+            boost::asio::ssl::stream_base::server,
+            boost::asio::bind_executor(self->strand_, [self](boost::system::error_code error) {
                 if (!self->failed(error)) self->read_header();
             }));
     });
@@ -244,9 +239,10 @@ void TlsServer::Session::start() {
 
 void TlsServer::Session::read_header() {
     arm("header read");
-    boost::asio::async_read(socket_, boost::asio::buffer(header_buf_),
-        boost::asio::bind_executor(strand_,
-        [self = shared_from_this()](boost::system::error_code error, std::size_t size) {
+    boost::asio::async_read(
+        socket_, boost::asio::buffer(header_buf_),
+        boost::asio::bind_executor(strand_, [self = shared_from_this()](
+                                                boost::system::error_code error, std::size_t size) {
             if (!self->finished_ && error == boost::asio::error::eof && size == 0) {
                 self->deadline_.cancel();
                 self->shutdown();
@@ -261,8 +257,7 @@ void TlsServer::Session::read_header() {
                 self->logger_->warn(
                     "Session {} ({}): protocol header mismatch: "
                     "magic={:#06x}, version={}, flags={:#04x}",
-                    self->session_id_, self->remote_, received_magic, header.version,
-                    header.flags);
+                    self->session_id_, self->remote_, received_magic, header.version, header.flags);
                 if (received_magic == protocol_magic) {
                     // Наша семья протокола: длина в заголовке достоверна —
                     // сливаем заявленную нагрузку, чтобы клиент дописал запрос и
@@ -281,8 +276,8 @@ void TlsServer::Session::read_header() {
             self->expected_crc_ = wire::from_network32(header.crc);
             if (self->expected_len_ > self->options_.max_payload) {
                 self->logger_->warn("Session {} ({}): payload {} exceeds server limit {}",
-                                     self->session_id_, self->remote_, self->expected_len_,
-                                     self->options_.max_payload);
+                                    self->session_id_, self->remote_, self->expected_len_,
+                                    self->options_.max_payload);
                 // Слив отвергнутой нагрузки перед уведомлением — то же
                 // обоснование, что и для протокольной ошибки выше.
                 self->drain_rejected(packet_error_oversize, EndReason::oversize,
@@ -296,13 +291,14 @@ void TlsServer::Session::read_header() {
 
 void TlsServer::Session::read_payload() {
     arm("payload read");
-    boost::asio::async_read(socket_, boost::asio::buffer(payload_buf_),
-        boost::asio::bind_executor(strand_,
-        [self = shared_from_this()](boost::system::error_code error, std::size_t size) {
+    boost::asio::async_read(
+        socket_, boost::asio::buffer(payload_buf_),
+        boost::asio::bind_executor(strand_, [self = shared_from_this()](
+                                                boost::system::error_code error, std::size_t size) {
             if (self->failed(error)) return;
             if (calculate_crc32(self->payload_buf_.data(), size) != self->expected_crc_) {
                 self->logger_->warn("Session {} ({}): CRC mismatch for packet id={}",
-                                     self->session_id_, self->remote_, self->current_id_);
+                                    self->session_id_, self->remote_, self->current_id_);
                 self->finish();
                 return;
             }
@@ -317,9 +313,8 @@ void TlsServer::Session::read_payload() {
 
 void TlsServer::Session::write_response() {
     if (logger_->should_log(spdlog::level::debug)) {
-        logger_->debug("Session {} ({}) sending id={}, data=\"{}\"",
-                       session_id_, remote_, current_id_,
-                       escape_log_payload(payload_buf_));
+        logger_->debug("Session {} ({}) sending id={}, data=\"{}\"", session_id_, remote_,
+                       current_id_, escape_log_payload(payload_buf_));
     }
     // Echo-ответ байт-в-байт совпадает с принятыми данными: header_buf_ уже
     // содержит id/len/crc в сетевом порядке, payload_buf_ — данные. Пишем оба
@@ -328,19 +323,19 @@ void TlsServer::Session::write_response() {
     // члены Session, чей lifetime держит захват self в обработчике.
     arm("response write");
     const std::array<boost::asio::const_buffer, 2> response_buffers{
-        boost::asio::buffer(header_buf_),
-        boost::asio::buffer(payload_buf_)};
-    boost::asio::async_write(socket_, response_buffers,
-        boost::asio::bind_executor(strand_,
-        [self = shared_from_this()](boost::system::error_code error, std::size_t) {
-            if (self->failed(error)) return;
-            // Ответ записан полностью: учитываем пакет и его полезные байты
-            // (заголовок не входит). Сессии живут на разных strand'ах, поэтому
-            // счётчики сервера атомарные — конкурентный ++ безопасен.
-            ++*self->echoed_packets_;
-            *self->echoed_bytes_ += self->expected_len_;
-            self->read_header();
-        }));
+        boost::asio::buffer(header_buf_), boost::asio::buffer(payload_buf_)};
+    boost::asio::async_write(
+        socket_, response_buffers,
+        boost::asio::bind_executor(
+            strand_, [self = shared_from_this()](boost::system::error_code error, std::size_t) {
+                if (self->failed(error)) return;
+                // Ответ записан полностью: учитываем пакет и его полезные байты
+                // (заголовок не входит). Сессии живут на разных strand'ах, поэтому
+                // счётчики сервера атомарные — конкурентный ++ безопасен.
+                ++*self->echoed_packets_;
+                *self->echoed_bytes_ += self->expected_len_;
+                self->read_header();
+            }));
 }
 
 // Слив отвергнутой нагрузки фиксированными порциями: буфер не растёт по
@@ -349,29 +344,29 @@ void TlsServer::Session::write_response() {
 // закрытие сокета с непрочитанными данными шлёт TCP RST, который отбрасывает
 // уже записанные клиенту байты. Разрыв соединения во время слива причину
 // отказа не отменяет.
-void TlsServer::Session::drain_rejected(uint32_t error_code, EndReason reason,
-                                        uint32_t remaining) {
+void TlsServer::Session::drain_rejected(uint32_t error_code, EndReason reason, uint32_t remaining) {
     if (remaining == 0) {
         send_error(error_code, reason);
         return;
     }
     payload_buf_.resize(std::min<std::size_t>(remaining, drain_chunk_size));
     arm("rejected payload drain");
-    boost::asio::async_read(socket_, boost::asio::buffer(payload_buf_),
-        boost::asio::bind_executor(strand_,
-        [self = shared_from_this(), error_code, reason, remaining](
-            boost::system::error_code error, std::size_t received) {
-            if (error) {
-                self->finish(reason);  // разрыв слива не отменяет причину отказа
-                return;
-            }
-            const uint32_t left = remaining - static_cast<uint32_t>(received);
-            if (left != 0) {
-                self->drain_rejected(error_code, reason, left);
-                return;
-            }
-            self->send_error(error_code, reason);
-        }));
+    boost::asio::async_read(
+        socket_, boost::asio::buffer(payload_buf_),
+        boost::asio::bind_executor(
+            strand_, [self = shared_from_this(), error_code, reason, remaining](
+                         boost::system::error_code error, std::size_t received) {
+                if (error) {
+                    self->finish(reason);  // разрыв слива не отменяет причину отказа
+                    return;
+                }
+                const uint32_t left = remaining - static_cast<uint32_t>(received);
+                if (left != 0) {
+                    self->drain_rejected(error_code, reason, left);
+                    return;
+                }
+                self->send_error(error_code, reason);
+            }));
 }
 
 // Уведомление об ошибке — best-effort: закрытие соединения не зависит от
@@ -380,12 +375,13 @@ void TlsServer::Session::drain_rejected(uint32_t error_code, EndReason reason,
 void TlsServer::Session::send_error(uint32_t error_code, EndReason reason) {
     const auto notification = Packet::make_error(error_code).serialize();
     std::memcpy(error_buf_.data(), notification.data(), error_buf_.size());
-    logger_->debug("Session {} ({}): sending error notification: code={} ({})",
-                   session_id_, remote_, error_code, packet_error_name(error_code));
+    logger_->debug("Session {} ({}): sending error notification: code={} ({})", session_id_,
+                   remote_, error_code, packet_error_name(error_code));
     arm("error notification write");
-    boost::asio::async_write(socket_, boost::asio::buffer(error_buf_),
-        boost::asio::bind_executor(strand_,
-        [self = shared_from_this(), reason](boost::system::error_code error, std::size_t) {
+    boost::asio::async_write(
+        socket_, boost::asio::buffer(error_buf_),
+        boost::asio::bind_executor(strand_, [self = shared_from_this(), reason](
+                                                boost::system::error_code error, std::size_t) {
             if (error) {
                 self->logger_->debug("Session {} ({}): error notification write failed: {}",
                                      self->session_id_, self->remote_, error.message());
@@ -396,8 +392,8 @@ void TlsServer::Session::send_error(uint32_t error_code, EndReason reason) {
 
 void TlsServer::Session::shutdown() {
     arm("TLS shutdown");
-    socket_.async_shutdown(boost::asio::bind_executor(strand_,
-        [self = shared_from_this()](boost::system::error_code error) {
+    socket_.async_shutdown(boost::asio::bind_executor(
+        strand_, [self = shared_from_this()](boost::system::error_code error) {
             if (!self->failed(error)) self->finish();
         }));
 }

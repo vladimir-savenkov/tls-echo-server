@@ -42,8 +42,8 @@ void check(bool condition, const char* message) {
 // Debug-level logger with a null sink: exercises the debug logging paths of
 // TlsServer/TlsClient/BasicClient without cluttering the test output.
 std::shared_ptr<spdlog::logger> make_quiet_debug_logger() {
-    auto logger = std::make_shared<spdlog::logger>(
-        "e2e", std::make_shared<spdlog::sinks::null_sink_mt>());
+    auto logger =
+        std::make_shared<spdlog::logger>("e2e", std::make_shared<spdlog::sinks::null_sink_mt>());
     logger->set_level(spdlog::level::debug);
     return logger;
 }
@@ -95,18 +95,17 @@ PemBundle make_self_signed_pem(bool expired = false,
     X509_gmtime_adj(X509_getm_notAfter(cert), expired ? -60 : 3600);
     X509_NAME* name = X509_get_subject_name(cert);
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-        reinterpret_cast<const unsigned char*>("tls-echo-test"), -1, -1, 0);
+                               reinterpret_cast<const unsigned char*>("tls-echo-test"), -1, -1, 0);
     X509_set_issuer_name(cert, name);
     X509_set_pubkey(cert, key);
-    X509_EXTENSION* san = X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name,
-        const_cast<char*>(names));
+    X509_EXTENSION* san =
+        X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name, const_cast<char*>(names));
     check(san != nullptr, "certificate SAN is created");
     if (san != nullptr) {
         X509_add_ext(cert, san, -1);
         X509_EXTENSION_free(san);
     }
-    check(X509_sign(cert, key, EVP_sha256()) > 0,
-          "self-signed certificate is created");
+    check(X509_sign(cert, key, EVP_sha256()) > 0, "self-signed certificate is created");
 
     BIO* cert_bio = BIO_new(BIO_s_mem());
     BIO* key_bio = BIO_new(BIO_s_mem());
@@ -126,10 +125,8 @@ PemBundle make_self_signed_pem(bool expired = false,
 
 boost::asio::ssl::context make_server_context(const PemBundle& pem) {
     boost::asio::ssl::context context(boost::asio::ssl::context::tls_server);
-    context.use_certificate(boost::asio::buffer(pem.certificate),
-                            boost::asio::ssl::context::pem);
-    context.use_private_key(boost::asio::buffer(pem.private_key),
-                            boost::asio::ssl::context::pem);
+    context.use_certificate(boost::asio::buffer(pem.certificate), boost::asio::ssl::context::pem);
+    context.use_private_key(boost::asio::buffer(pem.private_key), boost::asio::ssl::context::pem);
     return context;
 }
 
@@ -154,9 +151,9 @@ void test_tls_echo_round_trip() {
     TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1);
     client.start(3);
 
-    const bool finished = wait_for(io, [&client] {
-        return client.succeeded() || client.failure_reason() != "none";
-    }, std::chrono::seconds(10));
+    const bool finished = wait_for(
+        io, [&client] { return client.succeeded() || client.failure_reason() != "none"; },
+        std::chrono::seconds(10));
     stop_and_drain(io, server);
 
     check(finished && client.succeeded(),
@@ -167,10 +164,8 @@ void test_tls_echo_round_trip() {
     // Перекрёстная сверка счётчиков: сервер обязан посчитать те же пакеты
     // и те же полезные байты, что получил клиент.
     const auto stats = server.stats();
-    check(stats.packets_echoed == client.packets_received(),
-          "server counts every echoed packet");
-    check(stats.bytes_echoed == client.bytes_received(),
-          "server counts echoed payload bytes");
+    check(stats.packets_echoed == client.packets_received(), "server counts every echoed packet");
+    check(stats.bytes_echoed == client.bytes_received(), "server counts echoed payload bytes");
 }
 
 // Pipelining в режиме длительности: реальный TLS-сервер, окно запросов
@@ -193,20 +188,18 @@ void test_pipelined_duration_window() {
     TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1, options);
     client.start(5);  // счётчик игнорируется в режиме длительности
 
-    const bool finished = wait_for(io, [&client] {
-        return client.succeeded() || client.failure_reason() != "none";
-    }, std::chrono::seconds(10));
+    const bool finished = wait_for(
+        io, [&client] { return client.succeeded() || client.failure_reason() != "none"; },
+        std::chrono::seconds(10));
     stop_and_drain(io, server);
 
-    check(finished && client.succeeded(),
-          "pipelined duration client finishes cleanly in time");
+    check(finished && client.succeeded(), "pipelined duration client finishes cleanly in time");
     check(client.exchange_complete() && client.packets_received() > 0,
           "pipelined client drains every in-flight request");
     const auto stats = server.stats();
     check(stats.packets_echoed == client.packets_received(),
           "server echoes every pipelined packet");
-    check(stats.bytes_echoed == client.bytes_received(),
-          "server counts pipelined payload bytes");
+    check(stats.bytes_echoed == client.bytes_received(), "server counts pipelined payload bytes");
 }
 
 void test_server_rejects_corrupted_payload() {
@@ -227,21 +220,21 @@ void test_server_rejects_corrupted_payload() {
         boost::system::error_code ec;
         // Wildcard 0.0.0.0 подходит для bind, но Winsock отвергает его в connect.
         raw.lowest_layer().connect(
-            boost::asio::ip::tcp::endpoint(
-                boost::asio::ip::address_v4::loopback(), server.port()), ec);
+            boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), server.port()),
+            ec);
         check(!ec, ("raw client connects: " + ec.message()).c_str());
         raw.handshake(boost::asio::ssl::stream_base::client, ec);
         check(!ec, ("raw client completes TLS handshake: " + ec.message()).c_str());
 
         std::vector<char> bytes = Packet(100U, "legitimate payload").serialize();
-        bytes.back() = static_cast<char>(bytes.back() ^ 0xFF);  // повреждаем байт -> CRC не сойдётся
+        bytes.back() =
+            static_cast<char>(bytes.back() ^ 0xFF);  // повреждаем байт -> CRC не сойдётся
         boost::asio::write(raw, boost::asio::buffer(bytes), ec);
         check(!ec, ("raw client writes the corrupted packet: " + ec.message()).c_str());
 
         std::array<char, 32> sink{};
         raw.read_some(boost::asio::buffer(sink), ec);
-        check(ec.failed(),
-              "server closes the connection instead of echoing a corrupted payload");
+        check(ec.failed(), "server closes the connection instead of echoing a corrupted payload");
         raw.lowest_layer().close(ec);
     }
 
@@ -268,9 +261,9 @@ void test_server_rejects_protocol_header_mismatch() {
             boost::asio::ssl::stream<boost::asio::ip::tcp::socket> raw(io, client_ctx);
             boost::system::error_code ec;
             // Wildcard 0.0.0.0 подходит для bind, но Winsock отвергает его в connect.
-            raw.lowest_layer().connect(
-                boost::asio::ip::tcp::endpoint(
-                    boost::asio::ip::address_v4::loopback(), server.port()), ec);
+            raw.lowest_layer().connect(boost::asio::ip::tcp::endpoint(
+                                           boost::asio::ip::address_v4::loopback(), server.port()),
+                                       ec);
             check(!ec, ("raw client connects: " + ec.message()).c_str());
             raw.handshake(boost::asio::ssl::stream_base::client, ec);
             check(!ec, ("raw client completes TLS handshake: " + ec.message()).c_str());
@@ -280,8 +273,8 @@ void test_server_rejects_protocol_header_mismatch() {
             if (offset == 0) {
                 // Чужой magic: длина недостоверна, сервер ничего не сливает —
                 // пишем только заголовок, чтобы закрытие не состязалось с RST.
-                boost::asio::write(raw,
-                    boost::asio::buffer(bytes.data(), sizeof(PacketHeader)), ec);
+                boost::asio::write(raw, boost::asio::buffer(bytes.data(), sizeof(PacketHeader)),
+                                   ec);
             } else {
                 // Наш magic: сервер сливает заявленную нагрузку и уведомляет.
                 boost::asio::write(raw, boost::asio::buffer(bytes), ec);
@@ -309,8 +302,7 @@ void test_server_rejects_protocol_header_mismatch() {
 
         boost::asio::post(io, [&server] { server.stop(); });
         io_thread.join();
-        check(server.stats().protocol_errors == 1,
-              "protocol mismatch is counted in server stats");
+        check(server.stats().protocol_errors == 1, "protocol mismatch is counted in server stats");
     }
 }
 
@@ -332,9 +324,10 @@ void test_client_reports_connect_failure() {
     TlsClient client(io, client_ctx, "127.0.0.1", free_port, logger, 1);
     client.start(1);
 
-    const bool reported = wait_for(io, [&client] {
-        return !client.failure_reason().empty() && client.failure_reason() != "none";
-    }, std::chrono::seconds(10));
+    const bool reported = wait_for(
+        io,
+        [&client] { return !client.failure_reason().empty() && client.failure_reason() != "none"; },
+        std::chrono::seconds(10));
 
     check(reported, "client reports a failure for a closed port");
     check(client.failure_reason().rfind("connect:", 0) == 0,
@@ -356,11 +349,12 @@ void test_client_reports_server_rejection() {
     TlsClientOptions client_options;
     client_options.run.payload_size = 100;
     int completions = 0;
-    TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1,
-                     client_options, [&] { ++completions; });
+    TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1, client_options,
+                     [&] { ++completions; });
     client.start(1);
 
-    check(wait_for(io, [&client] { return client.finished(); }, std::chrono::seconds(5)),
+    check(wait_for(
+              io, [&client] { return client.finished(); }, std::chrono::seconds(5)),
           "rejected client finishes");
     check(!client.succeeded(), "oversized request does not succeed");
     check(client.packets_received() == 0, "rejected request is not echoed");
@@ -372,12 +366,11 @@ void test_client_reports_server_rejection() {
     check(server.stats().oversized == 1, "server counts the rejected payload");
 }
 
-
 // Проверки TLS identity: все сценарии используют тот же реальный сервер.
 void test_certificate_verification() {
     for (int scenario = 0; scenario < 5; ++scenario) {
-        const auto pem = make_self_signed_pem(scenario == 3,
-            scenario == 2 ? "DNS:wrong.example" : "DNS:localhost,IP:127.0.0.1");
+        const auto pem = make_self_signed_pem(
+            scenario == 3, scenario == 2 ? "DNS:wrong.example" : "DNS:localhost,IP:127.0.0.1");
         auto logger = make_quiet_debug_logger();
         boost::asio::io_context io;
         auto server_ctx = make_server_context(pem);
@@ -388,10 +381,11 @@ void test_certificate_verification() {
         }
         TlsServer server(io, server_ctx, 0, logger);
         int completions = 0;
-        TlsClient client(io, client_ctx, scenario == 4 ? "localhost" : "127.0.0.1",
-                         server.port(), logger, 1, {}, [&] { ++completions; });
+        TlsClient client(io, client_ctx, scenario == 4 ? "localhost" : "127.0.0.1", server.port(),
+                         logger, 1, {}, [&] { ++completions; });
         client.start(1);
-        check(wait_for(io, [&] { return client.finished(); }, std::chrono::seconds(5)),
+        check(wait_for(
+                  io, [&] { return client.finished(); }, std::chrono::seconds(5)),
               "certificate scenario finishes");
         check(client.succeeded() == (scenario == 0 || scenario == 4),
               "trusted DNS/IP succeed; unknown issuer, wrong name and expired identity fail");
@@ -420,30 +414,35 @@ void test_server_deadlines_and_limits() {  // NOLINT(readability-function-cognit
         if (scenario == 0 || scenario == 4) {
             // Первый узел не начинает TLS; второй проверяет лимит соединений.
             boost::asio::ip::tcp::socket extra(io);
-            if (scenario == 0) extra.connect({boost::asio::ip::address_v4::loopback(), server.port()});
-            check(wait_for(io, [&] { return server.stats().active == 1; }, std::chrono::seconds(5)),
+            if (scenario == 0)
+                extra.connect({boost::asio::ip::address_v4::loopback(), server.port()});
+            check(wait_for(
+                      io, [&] { return server.stats().active == 1; }, std::chrono::seconds(5)),
                   "server tracks accepted session");
             if (scenario == 4) server.stop();
-            check(wait_for(io, [&] { return server.stats().active == 0; }, std::chrono::seconds(5)),
+            check(wait_for(
+                      io, [&] { return server.stats().active == 0; }, std::chrono::seconds(5)),
                   "stalled handshake or drain deadline closes the session");
             check(server.stats().timed_out == (scenario == 0 ? 1U : 0U),
                   "operation timeout counted separately from drain cancellation");
-            if (scenario == 0) check(server.stats().rejected == 1, "connection limit rejects second peer");
+            if (scenario == 0)
+                check(server.stats().rejected == 1, "connection limit rejects second peer");
         } else {
             bool handshake_done = false;
             raw.async_handshake(boost::asio::ssl::stream_base::client,
-                [&](boost::system::error_code error) {
-                    check(!error, "raw client handshake succeeds");
-                    handshake_done = true;
-                });
-            check(wait_for(io, [&] { return handshake_done; }, std::chrono::seconds(5)),
+                                [&](boost::system::error_code error) {
+                                    check(!error, "raw client handshake succeeds");
+                                    handshake_done = true;
+                                });
+            check(wait_for(
+                      io, [&] { return handshake_done; }, std::chrono::seconds(5)),
                   "raw client finishes handshake");
             if (scenario == 2 || scenario == 3) {
                 auto bytes = Packet(100, scenario == 2 ? "body" : "oversized").serialize();
                 if (scenario == 2) {
                     // Передаём только заголовок: сервер ждёт payload и закрывается по таймауту.
                     boost::asio::write(raw,
-                        boost::asio::buffer(bytes.data(), sizeof(PacketHeader)));
+                                       boost::asio::buffer(bytes.data(), sizeof(PacketHeader)));
                 } else {
                     // Полный пакет: сервер отвергает длину, сливает payload и
                     // присылает уведомление об oversize перед закрытием.
@@ -452,12 +451,12 @@ void test_server_deadlines_and_limits() {  // NOLINT(readability-function-cognit
                     boost::system::error_code notification_error;
                     bool notification_received = false;
                     boost::asio::async_read(raw, boost::asio::buffer(notification),
-                        [&](boost::system::error_code error, std::size_t) {
-                            notification_error = error;
-                            notification_received = true;
-                        });
-                    check(wait_for(io, [&] { return notification_received; },
-                                   std::chrono::seconds(5)),
+                                            [&](boost::system::error_code error, std::size_t) {
+                                                notification_error = error;
+                                                notification_received = true;
+                                            });
+                    check(wait_for(
+                              io, [&] { return notification_received; }, std::chrono::seconds(5)),
                           "oversized request receives the error notification");
                     PacketHeader decoded{};
                     std::memcpy(&decoded, notification.data(), sizeof(decoded));
@@ -466,9 +465,11 @@ void test_server_deadlines_and_limits() {  // NOLINT(readability-function-cognit
                           "notification carries the oversize error code");
                 }
             }
-            check(wait_for(io, [&] { return server.stats().active == 0; }, std::chrono::seconds(5)),
+            check(wait_for(
+                      io, [&] { return server.stats().active == 0; }, std::chrono::seconds(5)),
                   "stalled header/payload or oversized payload is closed");
-            check(server.stats().oversized == (scenario == 3 ? 1U : 0U), "oversized header counter");
+            check(server.stats().oversized == (scenario == 3 ? 1U : 0U),
+                  "oversized header counter");
             check(server.stats().timed_out == (scenario == 3 ? 0U : 1U), "stalled read counter");
         }
         boost::system::error_code ignored;
@@ -494,21 +495,27 @@ void test_client_deadlines() {  // NOLINT(readability-function-cognitive-complex
         std::vector<char> response;
         acceptor.async_accept(peer.next_layer(), [&](boost::system::error_code error) {
             if (error || scenario == 0) return;
-            peer.async_handshake(boost::asio::ssl::stream_base::server,
+            peer.async_handshake(
+                boost::asio::ssl::stream_base::server,
                 [&](boost::system::error_code handshake_error) {
                     if (handshake_error || scenario == 1) return;
-                    boost::asio::async_read(peer, boost::asio::buffer(header),
+                    boost::asio::async_read(
+                        peer, boost::asio::buffer(header),
                         [&](boost::system::error_code read_error, std::size_t) {
                             if (read_error) return;
                             PacketHeader decoded{};
                             std::memcpy(&decoded, header.data(), sizeof(decoded));
                             payload.resize(wire::from_network16(decoded.len));
-                            boost::asio::async_read(peer, boost::asio::buffer(payload),
+                            boost::asio::async_read(
+                                peer, boost::asio::buffer(payload),
                                 [&](boost::system::error_code payload_error, std::size_t) {
                                     if (payload_error) return;
                                     response.assign(header.begin(), header.end());
-                                    if (scenario == 3) response.insert(response.end(), payload.begin(), payload.end());
-                                    boost::asio::async_write(peer, boost::asio::buffer(response),
+                                    if (scenario == 3)
+                                        response.insert(response.end(), payload.begin(),
+                                                        payload.end());
+                                    boost::asio::async_write(
+                                        peer, boost::asio::buffer(response),
                                         [](boost::system::error_code, std::size_t) {});
                                 });
                         });
@@ -517,10 +524,11 @@ void test_client_deadlines() {  // NOLINT(readability-function-cognitive-complex
         TlsClientOptions options;
         options.timeout = std::chrono::milliseconds(150);
         int completions = 0;
-        TlsClient client(io, client_ctx, "127.0.0.1", acceptor.local_endpoint().port(),
-                         logger, 1, options, [&] { ++completions; });
+        TlsClient client(io, client_ctx, "127.0.0.1", acceptor.local_endpoint().port(), logger, 1,
+                         options, [&] { ++completions; });
         client.start(1);
-        check(wait_for(io, [&] { return client.finished(); }, std::chrono::seconds(5)),
+        check(wait_for(
+                  io, [&] { return client.finished(); }, std::chrono::seconds(5)),
               "stalled peer cannot prevent client completion");
         check(!client.succeeded() && client.failure_reason().find("timed out") != std::string::npos,
               "client reports operation timeout");
@@ -552,21 +560,24 @@ void test_transport_write_deadline() {
         peer.async_handshake(boost::asio::ssl::stream_base::server,
                              [](boost::system::error_code) {});
     });
-    socket.next_layer().connect({boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port()});
+    socket.next_layer().connect(
+        {boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port()});
     socket.next_layer().set_option(boost::asio::socket_base::send_buffer_size(1024));
     int completions = 0;
     boost::system::error_code result;
     socket.async_handshake(boost::asio::ssl::stream_base::client,
-        boost::asio::bind_executor(strand, [&](boost::system::error_code error) {
-            check(!error, "write deadline peer completes handshake");
-            // Узел не читает TLS-данные; объём превышает размеры TCP-буферов.
-            connection.async_write(std::vector<char>(std::size_t{8} * 1024 * 1024, 'x'),
-                [&](boost::system::error_code write_error, std::size_t) {
-                    result = write_error;
-                    ++completions;
-                });
-        }));
-    check(wait_for(io, [&] { return completions != 0; }, std::chrono::seconds(5)),
+                           boost::asio::bind_executor(strand, [&](boost::system::error_code error) {
+                               check(!error, "write deadline peer completes handshake");
+                               // Узел не читает TLS-данные; объём превышает размеры TCP-буферов.
+                               connection.async_write(
+                                   std::vector<char>(std::size_t{8} * 1024 * 1024, 'x'),
+                                   [&](boost::system::error_code write_error, std::size_t) {
+                                       result = write_error;
+                                       ++completions;
+                                   });
+                           }));
+    check(wait_for(
+              io, [&] { return completions != 0; }, std::chrono::seconds(5)),
           "backpressured write finishes within deadline");
     check(result == boost::asio::error::timed_out && connection.timeout_stage() == "write",
           "backpressured write reports its timeout stage");
@@ -590,17 +601,20 @@ void test_shutdown_with_busy_and_idle_sessions() {
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> idle(io, client_ctx);
     idle.next_layer().connect({boost::asio::ip::address_v4::loopback(), server.port()});
     bool idle_ready = false;
-    idle.async_handshake(boost::asio::ssl::stream_base::client, [&](boost::system::error_code error) {
-        check(!error, "idle TLS peer handshakes");
-        idle_ready = true;
-    });
+    idle.async_handshake(boost::asio::ssl::stream_base::client,
+                         [&](boost::system::error_code error) {
+                             check(!error, "idle TLS peer handshakes");
+                             idle_ready = true;
+                         });
     check(wait_for(io, [&] { return idle_ready; }, std::chrono::seconds(5)), "idle session ready");
     int completions = 0;
-    TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1, {}, [&] { ++completions; });
+    TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1, {},
+                     [&] { ++completions; });
     client.start(10);
     // poll_one останавливает прогон сразу после accept, пока handshake ещё активен.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (server.stats().accepted < 2 && std::chrono::steady_clock::now() < deadline) io.poll_one();
+    while (server.stats().accepted < 2 && std::chrono::steady_clock::now() < deadline)
+        io.poll_one();
     check(server.stats().accepted == 2, "busy and idle sessions accepted before stop");
     server.stop();
     io.run();
@@ -622,12 +636,15 @@ void test_concurrent_tls_and_shutdown() {
     for (int i = 0; i < 16; ++i) {
         TlsClientOptions options;
         options.run.payload_size = i % 2 == 0 ? 0 : 65535;
-        auto context = std::make_unique<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
+        auto context =
+            std::make_unique<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
         context->set_verify_mode(boost::asio::ssl::verify_peer);
         context->add_certificate_authority(boost::asio::buffer(pem.certificate));
         client_contexts.push_back(std::move(context));
-        clients.push_back(std::make_unique<TlsClient>(io, *client_contexts.back(), "127.0.0.1", server.port(),
-            logger, i, options, [&] { if (++completed == 16) server.stop(); }));
+        clients.push_back(std::make_unique<TlsClient>(io, *client_contexts.back(), "127.0.0.1",
+                                                      server.port(), logger, i, options, [&] {
+                                                          if (++completed == 16) server.stop();
+                                                      }));
         clients.back()->start(3);
     }
     std::vector<std::thread> workers;
@@ -642,8 +659,7 @@ void test_concurrent_tls_and_shutdown() {
     check(server.stats().active == 0 && server.stats().accepted == 16,
           "server drains concurrent sessions");
     // 16 клиентов по 3 пакета; чётные клиенты — пустой payload, нечётные — 65535.
-    check(server.stats().packets_echoed == 48,
-          "server counts all concurrent echoed packets");
+    check(server.stats().packets_echoed == 48, "server counts all concurrent echoed packets");
     check(server.stats().bytes_echoed == std::uint64_t{8} * 3 * 65535,
           "server counts concurrent echoed bytes for boundary payloads");
 }
@@ -666,10 +682,9 @@ void test_force_stop_closes_sessions_immediately() {
     idle.next_layer().connect({boost::asio::ip::address_v4::loopback(), server.port()});
     bool handshake_done = false;
     idle.async_handshake(boost::asio::ssl::stream_base::client,
-                         [&](boost::system::error_code error) {
-                             handshake_done = !error;
-                         });
-    check(wait_for(io, [&] { return handshake_done; }, std::chrono::seconds(5)),
+                         [&](boost::system::error_code error) { handshake_done = !error; });
+    check(wait_for(
+              io, [&] { return handshake_done; }, std::chrono::seconds(5)),
           "idle peer completes TLS handshake");
     check(server.stats().accepted == 1, "idle session is accepted before stop");
     // Висящее чтение: увидит закрытие сервера в момент force_stop.
@@ -682,14 +697,14 @@ void test_force_stop_closes_sessions_immediately() {
 
     server.stop();
     io.poll();
-    check(server.stats().active == 1,
-          "idle session survives first stop within the drain period");
+    check(server.stats().active == 1, "idle session survives first stop within the drain period");
 
     server.force_stop();
-    check(wait_for(io, [&] { return server.stats().active == 0; },
-                   std::chrono::seconds(3)),
+    check(wait_for(
+              io, [&] { return server.stats().active == 0; }, std::chrono::seconds(3)),
           "force_stop closes sessions without waiting for the drain");
-    check(wait_for(io, [&] { return seen_close; }, std::chrono::seconds(3)),
+    check(wait_for(
+              io, [&] { return seen_close; }, std::chrono::seconds(3)),
           "idle peer sees its connection closed by force_stop");
     boost::system::error_code ignored;
     idle.next_layer().close(ignored);
@@ -712,7 +727,8 @@ void test_bind_addresses() {
         TlsServer server(io, server_ctx, 0, logger);  // по умолчанию 0.0.0.0
         TlsClient client(io, client_ctx, "127.0.0.1", server.port(), logger, 1);
         client.start(2);
-        check(wait_for(io, [&] { return client.succeeded(); }, std::chrono::seconds(5)),
+        check(wait_for(
+                  io, [&] { return client.succeeded(); }, std::chrono::seconds(5)),
               "default bind serves IPv4 loopback");
         stop_and_drain(io, server);
     }
@@ -726,8 +742,8 @@ void test_bind_addresses() {
         TlsClient v4(io, client_ctx, "127.0.0.1", server.port(), logger, 2);
         v6.start(2);
         v4.start(2);
-        check(wait_for(io, [&] { return v6.succeeded() && v4.succeeded(); },
-                       std::chrono::seconds(5)),
+        check(wait_for(
+                  io, [&] { return v6.succeeded() && v4.succeeded(); }, std::chrono::seconds(5)),
               "IPv6 bind is dual-stack: both ::1 and 127.0.0.1 connect");
         stop_and_drain(io, server);
     }
@@ -769,8 +785,7 @@ void test_accept_error_backoff() {
     bool limited = getrlimit(RLIMIT_NOFILE, &original) == 0;
     if (limited) {
         rlimit lowered{used + 32, original.rlim_max};
-        limited = lowered.rlim_cur <= original.rlim_max &&
-            setrlimit(RLIMIT_NOFILE, &lowered) == 0;
+        limited = lowered.rlim_cur <= original.rlim_max && setrlimit(RLIMIT_NOFILE, &lowered) == 0;
     }
     if (!limited) {
         check(false, "accept backoff: fd limit can be lowered");
@@ -787,26 +802,25 @@ void test_accept_error_backoff() {
         io.poll();  // сервер занимает дескриптор принятого соединения
         if (server.stats().accept_errors > 0) break;  // accept уже падает
     }
-    check(server.stats().accept_errors > 0,
-          "accept fails with EMFILE under fd exhaustion");
+    check(server.stats().accept_errors > 0, "accept fails with EMFILE under fd exhaustion");
 
-    holders.clear();      // серверные сессии увидят EOF и освободят fd
+    holders.clear();  // серверные сессии увидят EOF и освободят fd
     io.poll();
     setrlimit(RLIMIT_NOFILE, &original);  // вернуть лимит процессу
 
     // После паузы сервер возобновляет accept и снова обрабатывает echo.
-    auto client_ctx = std::make_unique<boost::asio::ssl::context>(
-        boost::asio::ssl::context::tls_client);
+    auto client_ctx =
+        std::make_unique<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
     client_ctx->set_verify_mode(boost::asio::ssl::verify_peer);
     client_ctx->add_certificate_authority(boost::asio::buffer(pem.certificate));
     int completions = 0;
     TlsClient client(io, *client_ctx, "127.0.0.1", server.port(), logger, 1, {},
                      [&] { ++completions; });
     client.start(5);
-    check(wait_for(io, [&] { return completions == 1; }, std::chrono::seconds(10)),
+    check(wait_for(
+              io, [&] { return completions == 1; }, std::chrono::seconds(10)),
           "server accepts again after accept backoff");
-    check(client.succeeded() && client.packets_received() == 5,
-          "echo works after accept backoff");
+    check(client.succeeded() && client.packets_received() == 5, "echo works after accept backoff");
 }
 #endif
 

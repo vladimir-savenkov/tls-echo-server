@@ -11,12 +11,10 @@
 // Общая настройка логгера сервера и клиента: асинхронная очередь
 // (overrun_oldest — сетевые потоки не блокируются на журналирование),
 // файл (усекается или дополняется) + цветной stdout, flush на warn и выше.
-inline std::shared_ptr<spdlog::logger> make_logger(const std::string& name,
-                                                   const std::string& file,
+inline std::shared_ptr<spdlog::logger> make_logger(const std::string& name, const std::string& file,
                                                    bool append) {
     spdlog::init_thread_pool(8192, 1);
-    auto logger = spdlog::create_async_nb<spdlog::sinks::basic_file_sink_mt>(
-        name, file, !append);
+    auto logger = spdlog::create_async_nb<spdlog::sinks::basic_file_sink_mt>(name, file, !append);
     logger->sinks().push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
     logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
     logger->flush_on(spdlog::level::warn);

@@ -25,20 +25,19 @@ public:
     void async_write(std::vector<char> bytes, Handler&& handler) {
         auto buffer = std::make_shared<std::vector<char>>(std::move(bytes));
         boost::asio::async_write(socket_, boost::asio::buffer(*buffer),
-            [buffer, handler = std::forward<Handler>(handler)](
-                const boost::system::error_code& error, std::size_t size) mutable {
-                handler(error, size);
-            });
+                                 [buffer, handler = std::forward<Handler>(handler)](
+                                     const boost::system::error_code& error,
+                                     std::size_t size) mutable { handler(error, size); });
     }
 
     template <typename Handler>
     void async_read_exactly(std::size_t size, Handler&& handler) {
         auto buffer = std::make_shared<std::vector<char>>(size);
         boost::asio::async_read(socket_, boost::asio::buffer(*buffer),
-            [buffer, handler = std::forward<Handler>(handler)](
-                const boost::system::error_code& error, std::size_t) mutable {
-                handler(error, std::move(*buffer));
-            });
+                                [buffer, handler = std::forward<Handler>(handler)](
+                                    const boost::system::error_code& error, std::size_t) mutable {
+                                    handler(error, std::move(*buffer));
+                                });
     }
 
     void abort() { close(); }
@@ -62,8 +61,8 @@ void check(bool condition, const char* message) {
     }
 }
 
-void serve_echo(tcp::acceptor& acceptor, int packet_count,
-                bool corrupt_first_response, bool fragment_responses) {
+void serve_echo(tcp::acceptor& acceptor, int packet_count, bool corrupt_first_response,
+                bool fragment_responses) {
     tcp::socket socket(acceptor.get_executor());
     acceptor.accept(socket);
 
@@ -107,8 +106,8 @@ void run_scenario(int packet_count, bool corrupt_response, bool fragmented,
 
     boost::asio::io_context client_context;
     tcp::socket socket(client_context);
-    socket.connect(tcp::endpoint(
-        boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port()));
+    socket.connect(
+        tcp::endpoint(boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port()));
     TcpConnection connection(std::move(socket));
     BasicClient<TcpConnection> client(connection);
     client.send_packets(packet_count);
@@ -119,14 +118,14 @@ void run_scenario(int packet_count, bool corrupt_response, bool fragmented,
     check(client.error() == expected_error, "client reports expected integration result");
     check(client.complete() == expected_complete, "client completion state is correct");
     if (expected_complete) {
-        check(client.packets_sent() == static_cast<uint64_t>(packet_count), "all integration packets are sent");
-        check(client.packets_received() == static_cast<uint64_t>(packet_count), "all integration packets are received");
+        check(client.packets_sent() == static_cast<uint64_t>(packet_count),
+              "all integration packets are sent");
+        check(client.packets_received() == static_cast<uint64_t>(packet_count),
+              "all integration packets are received");
     }
 }
 
-void test_fragmented_multi_packet_echo() {
-    run_scenario(3, false, true, ClientError::none, true);
-}
+void test_fragmented_multi_packet_echo() { run_scenario(3, false, true, ClientError::none, true); }
 
 void test_corrupted_echo_response() {
     run_scenario(1, true, false, ClientError::invalid_crc, false);

@@ -209,8 +209,7 @@ void test_invalid_responses() {
         client.send_packets(1);
         connection.complete_write();
         connection.complete_read(header_of(Packet::make_error(99U)));
-        check(client.error() == ClientError::server_rejected &&
-                  client.server_error_code() == 99U,
+        check(client.error() == ClientError::server_rejected && client.server_error_code() == 99U,
               "unknown server error codes are preserved");
     }
     {
@@ -259,7 +258,8 @@ void test_exact_payload_and_completion() {
     client.send_packets(1);
     connection.complete_write();
     deliver_response(connection, Packet(100U, "different payload with valid CRC"));
-    check(client.error() == ClientError::unexpected_payload, "wrong echo with valid CRC is rejected");
+    check(client.error() == ClientError::unexpected_payload,
+          "wrong echo with valid CRC is rejected");
     check(client.packets_received() == 0, "wrong echo is not counted");
     check(connection.closed, "invalid echo aborts connection");
     check(completions == 1 && result == ClientError::unexpected_payload,
@@ -272,14 +272,18 @@ void test_binary_payload_boundaries() {
         int completions = 0;
         ClientRunOptions options;
         options.payload_size = size;
-        BasicClient<FakeConnection> client(connection, {}, [&](ClientError error) {
-            ++completions;
-            check(error == ClientError::none, "binary echo completes successfully");
-        }, options);
+        BasicClient<FakeConnection> client(
+            connection, {},
+            [&](ClientError error) {
+                ++completions;
+                check(error == ClientError::none, "binary echo completes successfully");
+            },
+            options);
         client.send_packets(1);
         const auto& bytes = connection.writes[0];
-        const auto packet = Packet::deserialize(bytes.data(), sizeof(PacketHeader),
-            std::string(bytes.begin() + sizeof(PacketHeader), bytes.end()));
+        const auto packet =
+            Packet::deserialize(bytes.data(), sizeof(PacketHeader),
+                                std::string(bytes.begin() + sizeof(PacketHeader), bytes.end()));
         check(packet.length() == size, "requested binary payload size is used");
         connection.complete_write();
         deliver_response(connection, packet);
@@ -338,10 +342,13 @@ void test_window_pipelining() {
     ClientRunOptions options;
     options.duration = std::chrono::milliseconds(100);
     options.window = 3;
-    BasicClient<FakeConnection> client(connection, {}, [&](ClientError error) {
-        ++completions;
-        result = error;
-    }, options);
+    BasicClient<FakeConnection> client(
+        connection, {},
+        [&](ClientError error) {
+            ++completions;
+            result = error;
+        },
+        options);
     client.send_packets(5);  // счётчик в режиме длительности игнорируется
 
     check(connection.writes.size() == 1, "pipelining starts with a single request");
@@ -355,8 +362,8 @@ void test_window_pipelining() {
     connection.complete_write();
     check(connection.writes.size() == 3, "window is full: no fourth request without a response");
     check(serialized_id(connection.writes[0]) == 100U &&
-          serialized_id(connection.writes[1]) == 101U &&
-          serialized_id(connection.writes[2]) == 102U,
+              serialized_id(connection.writes[1]) == 101U &&
+              serialized_id(connection.writes[2]) == 102U,
           "pipelined requests keep sequential ids");
 
     deliver_response(connection, Packet(100U, "Hello from C++ Client, packet #0"));
@@ -456,8 +463,8 @@ void test_window_transport_failure() {
         ClientRunOptions options;
         options.duration = std::chrono::milliseconds(100);
         options.window = 3;
-        BasicClient<FakeConnection> client(connection, {},
-            [&](ClientError) { ++completions; }, options);
+        BasicClient<FakeConnection> client(
+            connection, {}, [&](ClientError) { ++completions; }, options);
         client.send_packets(5);
         connection.complete_write();
         connection.complete_write();

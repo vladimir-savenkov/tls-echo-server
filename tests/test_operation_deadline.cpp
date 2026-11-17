@@ -110,9 +110,8 @@ void test_accepts_move_only_handler() {
     OperationDeadline deadline(io.get_executor());
     auto secret = std::make_unique<int>(7);
     int observed = 0;
-    deadline.arm(std::chrono::milliseconds(0), [secret = std::move(secret), &observed] {
-        observed = *secret;
-    });
+    deadline.arm(std::chrono::milliseconds(0),
+                 [secret = std::move(secret), &observed] { observed = *secret; });
     run_for(io, std::chrono::milliseconds(500));
     check(observed == 7, "move-only handler is invoked");
 }

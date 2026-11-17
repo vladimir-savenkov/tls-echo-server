@@ -38,8 +38,8 @@ void test_crc32_known_vectors() {
     const std::string binary{"\0\x80\xff\0", 4};
     check(calculate_crc32(binary.data(), binary.size()) == 0x535539EEU,
           "CRC32 handles arbitrary binary data");
-    check_throws<std::invalid_argument>(
-        [] { calculate_crc32(nullptr, 1); }, "CRC32 rejects null non-empty input");
+    check_throws<std::invalid_argument>([] { calculate_crc32(nullptr, 1); },
+                                        "CRC32 rejects null non-empty input");
 }
 
 void test_construction_and_serialization() {
@@ -78,18 +78,16 @@ void test_round_trip_and_corruption() {
 
     std::string corrupted = payload;
     corrupted[0] ^= 1;
-    const Packet damaged(original.id(), static_cast<uint16_t>(corrupted.size()),
-                         original.crc(), corrupted);
+    const Packet damaged(original.id(), static_cast<uint16_t>(corrupted.size()), original.crc(),
+                         corrupted);
     check(!damaged.verify_crc(), "payload corruption is detected");
 }
 
 void test_invalid_input_and_boundaries() {
-    check_throws<std::length_error>(
-        [] { Packet packet(1U, std::string(65536, 'x')); },
-        "oversized payload is rejected");
-    check_throws<std::invalid_argument>(
-        [] { Packet packet(1U, 2U, 0U, "x"); },
-        "mismatched payload length is rejected");
+    check_throws<std::length_error>([] { Packet packet(1U, std::string(65536, 'x')); },
+                                    "oversized payload is rejected");
+    check_throws<std::invalid_argument>([] { Packet packet(1U, 2U, 0U, "x"); },
+                                        "mismatched payload length is rejected");
 
     PacketHeader header{};
     header.magic = wire::to_network16(protocol_magic);
@@ -97,11 +95,12 @@ void test_invalid_input_and_boundaries() {
     header.flags = protocol_flags_none;
     header.id = wire::to_network32(1U);
     header.len = wire::to_network16(2U);
+    check_throws<std::invalid_argument>([&] { Packet::deserialize(nullptr, sizeof(header), "xx"); },
+                                        "null header is rejected");
     check_throws<std::invalid_argument>(
-        [&] { Packet::deserialize(nullptr, sizeof(header), "xx"); },
-        "null header is rejected");
-    check_throws<std::invalid_argument>(
-        [&] { Packet::deserialize(reinterpret_cast<const char*>(&header), sizeof(header) - 1, "xx"); },
+        [&] {
+            Packet::deserialize(reinterpret_cast<const char*>(&header), sizeof(header) - 1, "xx");
+        },
         "undersized header is rejected");
     check_throws<std::invalid_argument>(
         [&] { Packet::deserialize(reinterpret_cast<const char*>(&header), sizeof(header), "x"); },
@@ -145,12 +144,9 @@ void test_error_notification_packets() {
     check(notification.crc() == 0U && notification.verify_crc(),
           "notification CRC matches the empty payload");
 
-    const std::vector<char> expected{
-        0x54, 0x45, 0x01, 0x01,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00};
-    check(notification.serialize() == expected,
-          "notification matches the golden wire format");
+    const std::vector<char> expected{0x54, 0x45, 0x01, 0x01, 0x00, 0x00, 0x00,
+                                     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    check(notification.serialize() == expected, "notification matches the golden wire format");
 
     const Packet decoded = Packet::deserialize(expected.data(), sizeof(PacketHeader), "");
     check(decoded.flags() == protocol_flag_error && decoded.id() == packet_error_oversize &&
@@ -162,9 +158,8 @@ void test_error_notification_packets() {
     check_throws<std::invalid_argument>(
         [&] { Packet::deserialize(with_unknown_bits.data(), sizeof(PacketHeader), ""); },
         "notification with unknown flag bits is rejected");
-    check_throws<std::invalid_argument>(
-        [] { Packet packet(1U, 1U, 0U, "x", protocol_flag_error); },
-        "error notification with payload is rejected");
+    check_throws<std::invalid_argument>([] { Packet packet(1U, 1U, 0U, "x", protocol_flag_error); },
+                                        "error notification with payload is rejected");
 
     check(packet_error_name(packet_error_oversize) == "oversize payload" &&
               packet_error_name(packet_error_protocol) == "protocol error",
@@ -179,11 +174,29 @@ void test_defaults_golden_bytes_and_random_round_trips() {
           "default packet is a valid empty packet");
 
     const Packet golden(0x01020304U, "123456789");
-    const std::vector<char> expected{
-        0x54, 0x45, 0x01, 0x00,  // magic 'T','E', версия 1, флаги 0
-        0x01, 0x02, 0x03, 0x04, 0x00, 0x09,
-        static_cast<char>(0xCB), static_cast<char>(0xF4), 0x39, 0x26,
-        '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    const std::vector<char> expected{0x54,
+                                     0x45,
+                                     0x01,
+                                     0x00,  // magic 'T','E', версия 1, флаги 0
+                                     0x01,
+                                     0x02,
+                                     0x03,
+                                     0x04,
+                                     0x00,
+                                     0x09,
+                                     static_cast<char>(0xCB),
+                                     static_cast<char>(0xF4),
+                                     0x39,
+                                     0x26,
+                                     '1',
+                                     '2',
+                                     '3',
+                                     '4',
+                                     '5',
+                                     '6',
+                                     '7',
+                                     '8',
+                                     '9'};
     check(golden.serialize() == expected, "packet matches the golden wire format");
     check(golden.serialize() == golden.serialize(), "serialization is deterministic");
 
@@ -198,9 +211,9 @@ void test_defaults_golden_bytes_and_random_round_trips() {
         const uint32_t id = generator();
         const Packet original(id, payload);
         const auto bytes = original.serialize();
-        const Packet decoded = Packet::deserialize(
-            bytes.data(), sizeof(PacketHeader),
-            std::string(bytes.begin() + sizeof(PacketHeader), bytes.end()));
+        const Packet decoded =
+            Packet::deserialize(bytes.data(), sizeof(PacketHeader),
+                                std::string(bytes.begin() + sizeof(PacketHeader), bytes.end()));
         check(decoded.id() == id && decoded.payload() == payload && decoded.verify_crc(),
               "randomized packet round trip");
     }

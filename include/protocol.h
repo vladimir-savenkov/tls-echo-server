@@ -42,8 +42,7 @@ struct PacketHeader {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(PacketHeader) == 14, 
-              "PacketHeader must be exactly 14 bytes");
+static_assert(sizeof(PacketHeader) == 14, "PacketHeader must be exactly 14 bytes");
 
 // Человекочитаемое имя кода уведомления — для журналов и CLI; по проводу
 // передаётся только числовой код в поле id.
@@ -56,7 +55,7 @@ std::string packet_error_name(uint32_t error_code);
 class Packet {
 public:
     Packet() = default;
-    
+
     // Конструктор для отправки (автоматический расчет CRC)
     Packet(uint32_t id, const std::string& payload);
 

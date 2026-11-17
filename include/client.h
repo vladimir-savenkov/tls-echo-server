@@ -18,45 +18,46 @@ public:
     using Strand = boost::asio::strand<boost::asio::io_context::executor_type>;
     using CloseHandler = std::function<void(boost::system::error_code)>;
 
-    TlsConnection(Stream& socket, Strand& strand,
-                  std::shared_ptr<spdlog::logger> logger, int client_number,
-                  std::chrono::milliseconds timeout, CloseHandler on_closed)
+    TlsConnection(Stream& socket, Strand& strand, std::shared_ptr<spdlog::logger> logger,
+                  int client_number, std::chrono::milliseconds timeout, CloseHandler on_closed)
         : socket_(socket), strand_(strand), logger_(std::move(logger)),
-          client_number_(client_number), write_deadline_(strand),
-          read_deadline_(strand), timeout_(timeout),
-          on_closed_(std::move(on_closed)) {}
+          client_number_(client_number), write_deadline_(strand), read_deadline_(strand),
+          timeout_(timeout), on_closed_(std::move(on_closed)) {}
 
     template <typename Handler>
     void async_write(std::vector<char> bytes, Handler&& handler) {
         auto buffer = std::make_shared<std::vector<char>>(std::move(bytes));
         begin(write_deadline_, "write");
-        boost::asio::async_write(socket_, boost::asio::buffer(*buffer),
-            boost::asio::bind_executor(strand_,
-            [this, buffer, handler = std::forward<Handler>(handler)](
-                boost::system::error_code error, std::size_t size) mutable {
-                handler(end(write_deadline_, error), size);
-            }));
+        boost::asio::async_write(
+            socket_, boost::asio::buffer(*buffer),
+            boost::asio::bind_executor(
+                strand_, [this, buffer, handler = std::forward<Handler>(handler)](
+                             boost::system::error_code error, std::size_t size) mutable {
+                    handler(end(write_deadline_, error), size);
+                }));
     }
 
     template <typename Handler>
     void async_read_exactly(std::size_t size, Handler&& handler) {
         auto buffer = std::make_shared<std::vector<char>>(size);
         begin(read_deadline_, "read");
-        boost::asio::async_read(socket_, boost::asio::buffer(*buffer),
-            boost::asio::bind_executor(strand_,
-            [this, buffer, handler = std::forward<Handler>(handler)](
-                boost::system::error_code error, std::size_t bytes_read) mutable {
-                if (!error && bytes_read != buffer->size()) error = boost::asio::error::message_size;
-                handler(end(read_deadline_, error), std::move(*buffer));
-            }));
+        boost::asio::async_read(
+            socket_, boost::asio::buffer(*buffer),
+            boost::asio::bind_executor(
+                strand_, [this, buffer, handler = std::forward<Handler>(handler)](
+                             boost::system::error_code error, std::size_t bytes_read) mutable {
+                    if (!error && bytes_read != buffer->size())
+                        error = boost::asio::error::message_size;
+                    handler(end(read_deadline_, error), std::move(*buffer));
+                }));
     }
 
     // Shutdown не пересекается с обменом: завершение вызывается при пустом
     // окне in-flight, поэтому занимает дедлайн записи (исходящая операция).
     void close() {
         begin(write_deadline_, "TLS shutdown");
-        socket_.async_shutdown(boost::asio::bind_executor(strand_,
-            [this](boost::system::error_code error) {
+        socket_.async_shutdown(
+            boost::asio::bind_executor(strand_, [this](boost::system::error_code error) {
                 error = end(write_deadline_, error);
                 abort();
                 on_closed_(error);
@@ -114,11 +115,10 @@ struct TlsClientOptions {
 class TlsClient {
 public:
     using CompletionHandler = std::function<void()>;
-    explicit TlsClient(boost::asio::io_context& io_context,
-                      boost::asio::ssl::context& ssl_context,
-                      std::string host, unsigned short port,
-                      std::shared_ptr<spdlog::logger> logger, int client_number,
-                      TlsClientOptions options = {}, CompletionHandler on_complete = {});
+    explicit TlsClient(boost::asio::io_context& io_context, boost::asio::ssl::context& ssl_context,
+                       std::string host, unsigned short port,
+                       std::shared_ptr<spdlog::logger> logger, int client_number,
+                       TlsClientOptions options = {}, CompletionHandler on_complete = {});
 
     void start(int packet_count);
     bool finished() const { return finished_; }

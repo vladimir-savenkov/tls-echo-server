@@ -25,8 +25,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size) {
     const std::string payload(reinterpret_cast<const char*>(data) + sizeof(PacketHeader),
                               size - sizeof(PacketHeader));
     try {
-        const Packet packet = Packet::deserialize(reinterpret_cast<const char*>(data),
-                                                  sizeof(PacketHeader), payload);
+        const Packet packet =
+            Packet::deserialize(reinterpret_cast<const char*>(data), sizeof(PacketHeader), payload);
         // Инвариант round-trip: принятый пакет сериализуется обратно в те же
         // байты — заголовок переносит id/len/crc/flags как есть, а конструктор
         // уже гарантировал len == payload.size().

@@ -21,22 +21,29 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
     try {
         // --- 1. Парсинг аргументов ---
         po::options_description desc("C++ TLS Client");
-        desc.add_options()
-            ("help", "show help message")
-            ("host,h", po::value<std::string>()->required(), "server host (required; e.g., localhost)")
-            ("port,p", po::value<unsigned short>()->default_value(8443), "server port")
-            ("clients", po::value<int>()->default_value(1), "number of concurrent connections (positive)")
-            ("packets,n", po::value<int>()->default_value(5), "number of packets to send (positive)")
-            ("cert,c", po::value<std::string>(), "trusted CA certificate (default: system trust store)")
-            ("insecure", "disable TLS certificate verification for local tests")
-            ("timeout-ms", po::value<int>()->default_value(10000), "deadline per network operation, milliseconds")
-            ("payload-size", po::value<int>(), "binary payload size, 0..65535 bytes")
-            ("duration", po::value<int>()->default_value(0), "run each connection for this many seconds instead of packet count")
-            ("window", po::value<int>()->default_value(8), "pipelining window for --duration mode, 1..1024 (1 = strict request/response)")
-            ("threads,t", po::value<int>()->default_value(1), "number of I/O worker threads (positive)")
-            ("log-file,l", po::value<std::string>()->default_value("client.log"), "log file path")
-            ("log-append", "append to the log file instead of truncating it on start")
-            ("log-level", po::value<std::string>()->default_value("info"), "log level");
+        desc.add_options()("help", "show help message")("host,h",
+                                                        po::value<std::string>()->required(),
+                                                        "server host (required; e.g., localhost)")(
+            "port,p", po::value<unsigned short>()->default_value(8443), "server port")(
+            "clients", po::value<int>()->default_value(1),
+            "number of concurrent connections (positive)")("packets,n",
+                                                           po::value<int>()->default_value(5),
+                                                           "number of packets to send (positive)")(
+            "cert,c", po::value<std::string>(),
+            "trusted CA certificate (default: system trust store)")(
+            "insecure", "disable TLS certificate verification for local tests")(
+            "timeout-ms", po::value<int>()->default_value(10000),
+            "deadline per network operation, milliseconds")("payload-size", po::value<int>(),
+                                                            "binary payload size, 0..65535 bytes")(
+            "duration", po::value<int>()->default_value(0),
+            "run each connection for this many seconds instead of packet count")(
+            "window", po::value<int>()->default_value(8),
+            "pipelining window for --duration mode, 1..1024 (1 = strict request/response)")(
+            "threads,t", po::value<int>()->default_value(1),
+            "number of I/O worker threads (positive)")(
+            "log-file,l", po::value<std::string>()->default_value("client.log"), "log file path")(
+            "log-append", "append to the log file instead of truncating it on start")(
+            "log-level", po::value<std::string>()->default_value("info"), "log level");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -70,8 +77,8 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
         const int window = vm["window"].as<int>();
         if (timeout_ms <= 0 || duration < 0 || window < 1 ||
             window > static_cast<int>(max_client_window) ||
-            (vm.count("payload-size") > 0 && (vm["payload-size"].as<int>() < 0 ||
-                                              vm["payload-size"].as<int>() > 65535)) ||
+            (vm.count("payload-size") > 0 &&
+             (vm["payload-size"].as<int>() < 0 || vm["payload-size"].as<int>() > 65535)) ||
             (vm.count("insecure") > 0 && vm.count("cert") > 0) ||
             (duration > 0 && !vm["packets"].defaulted())) {
             std::cerr << "Argument parsing error: check --timeout-ms, --payload-size, "
@@ -84,7 +91,8 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
         client_options.run.duration = std::chrono::seconds(duration);
         client_options.run.window = static_cast<std::size_t>(window);
         if (vm.count("payload-size") > 0) {
-            client_options.run.payload_size = static_cast<std::size_t>(vm["payload-size"].as<int>());
+            client_options.run.payload_size =
+                static_cast<std::size_t>(vm["payload-size"].as<int>());
         }
         std::string log_file = vm["log-file"].as<std::string>();
         const bool log_append = vm.count("log-append") > 0;
@@ -99,8 +107,9 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
         // Окно pipelining имеет смысл только в режиме --duration: счётный
         // режим держит строгий запрос/ответ ради честных измерений задержки.
         if (duration == 0 && !vm["window"].defaulted() && window != 1) {
-            logger->warn("Pipelining window applies to --duration mode only; "
-                         "using strict request/response");
+            logger->warn(
+                "Pipelining window applies to --duration mode only; "
+                "using strict request/response");
         }
 
         logger->info("Starting {} clients with {} worker threads, {} packets each; target {}:{}",
@@ -117,19 +126,22 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
             // поддерживаемых OpenSSL. Фиксация только 1.2 (tlsv12_client) отрезала
             // бы 1-RTT handshake TLS 1.3, влияющий на измеряемую задержку
             // DNS + TCP + TLS; пол ниже 1.2 недопустим (RFC 8996).
-            auto context = std::make_unique<boost::asio::ssl::context>(
-                boost::asio::ssl::context::tls_client);
+            auto context =
+                std::make_unique<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
             SSL_CTX_set_min_proto_version(context->native_handle(), TLS1_2_VERSION);
             if (vm.count("insecure") > 0) {
                 context->set_verify_mode(boost::asio::ssl::verify_none);
             } else {
                 context->set_verify_mode(boost::asio::ssl::verify_peer);
-                if (vm.count("cert") > 0) context->load_verify_file(vm["cert"].as<std::string>());
-                else context->set_default_verify_paths();
+                if (vm.count("cert") > 0)
+                    context->load_verify_file(vm["cert"].as<std::string>());
+                else
+                    context->set_default_verify_paths();
             }
             ssl_contexts.push_back(std::move(context));
         }
-        if (vm.count("insecure") > 0) logger->warn("TLS certificate verification is disabled (--insecure)");
+        if (vm.count("insecure") > 0)
+            logger->warn("TLS certificate verification is disabled (--insecure)");
 
         // Храним клиентов до завершения всех операций, включая отменённые.
         std::vector<std::unique_ptr<TlsClient>> clients;
@@ -137,7 +149,8 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
         const auto started_at = std::chrono::steady_clock::now();
         for (int index = 0; index < client_count; ++index) {
             clients.push_back(std::make_unique<TlsClient>(
-                io_context, *ssl_contexts[static_cast<std::size_t>(index)], host, port, logger, index + 1, client_options));
+                io_context, *ssl_contexts[static_cast<std::size_t>(index)], host, port, logger,
+                index + 1, client_options));
             clients.back()->start(packet_count);
         }
 
@@ -162,7 +175,8 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
             packets_received += client->packets_received();
             bytes_received += client->bytes_received();
             request_latency.merge(client->latency());
-            if (client->setup_microseconds() > 0) setup_latency.record(client->setup_microseconds());
+            if (client->setup_microseconds() > 0)
+                setup_latency.record(client->setup_microseconds());
             if (client->succeeded()) {
                 ++completed_clients;
             } else {
@@ -172,12 +186,13 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
 
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started_at);
-        const auto expected = duration > 0 ? std::string("duration") :
-            std::to_string(static_cast<std::uint64_t>(client_count) * packet_count);
+        const auto expected =
+            duration > 0 ? std::string("duration")
+                         : std::to_string(static_cast<std::uint64_t>(client_count) * packet_count);
         logger->info("Completed clients: {}/{}; packets received: {}/{}; elapsed: {} ms",
                      completed_clients, client_count, packets_received, expected, elapsed.count());
-        const double seconds = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - started_at).count();
+        const double seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
         logger->info("Throughput: {:.2f} packets/s; {:.2f} MiB/s (echo, useful payload)",
                      static_cast<double>(packets_received) / seconds,
                      static_cast<double>(bytes_received) / (1024 * 1024) / seconds);

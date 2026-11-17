@@ -39,9 +39,9 @@ struct ServerStats {
 // Владелец хранит сервер до обработки всех операций, включая отменённые.
 class TlsServer {
 public:
-    explicit TlsServer(boost::asio::io_context& io_context,
-                      boost::asio::ssl::context& ssl_context, unsigned short port,
-                      std::shared_ptr<spdlog::logger> logger, ServerOptions options = {});
+    explicit TlsServer(boost::asio::io_context& io_context, boost::asio::ssl::context& ssl_context,
+                       unsigned short port, std::shared_ptr<spdlog::logger> logger,
+                       ServerOptions options = {});
     ~TlsServer();
     void run();
     // Мягкая остановка: акцептор закрывается, активным сессиям даётся
@@ -83,11 +83,11 @@ private:
     public:
         Session(boost::asio::io_context& io, boost::asio::ip::tcp::socket socket,
                 boost::asio::ssl::context& ssl, std::shared_ptr<spdlog::logger> logger,
-                ServerOptions options, uint64_t session_id,
-                std::atomic<uint64_t>* echoed_packets, std::atomic<uint64_t>* echoed_bytes,
-                std::function<void(EndReason)> on_finished);
+                ServerOptions options, uint64_t session_id, std::atomic<uint64_t>* echoed_packets,
+                std::atomic<uint64_t>* echoed_bytes, std::function<void(EndReason)> on_finished);
         void start();
         void cancel();
+
     private:
         void arm(const char* stage);
         bool failed(boost::system::error_code error);

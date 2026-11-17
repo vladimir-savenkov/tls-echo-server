@@ -21,21 +21,24 @@ int main(int argc, char* argv[]) {
     try {
         // --- 1. Парсинг аргументов ---
         po::options_description desc("Allowed options");
-        desc.add_options()
-            ("help", "produce help message")
-            ("port,p", po::value<unsigned short>()->default_value(8443), "port to listen on")
-            ("bind,b", po::value<std::string>()->default_value("0.0.0.0"),
-             "address to listen on: IPv4 or IPv6 (IPv6 enables dual-stack)")
-            ("cert,c", po::value<std::string>()->required(), "server certificate path (required)")
-            ("key,k", po::value<std::string>()->required(), "server private key path (required)")
-            ("threads,t", po::value<int>()->default_value(4), "number of worker threads")
-            ("max-connections", po::value<int>()->default_value(1024), "maximum active sessions")
-            ("max-payload", po::value<int>()->default_value(65535), "maximum payload, 0..65535 bytes")
-            ("timeout-ms", po::value<int>()->default_value(10000), "deadline per network operation, milliseconds")
-            ("shutdown-timeout-ms", po::value<int>()->default_value(5000), "active session drain deadline, milliseconds")
-            ("log-file,l", po::value<std::string>()->default_value("server.log"), "path to log file")
-            ("log-append", "append to the log file instead of truncating it on start")
-            ("log-level", po::value<std::string>()->default_value("info"), "log level (trace, debug, info, warn, error, critical)");
+        desc.add_options()("help", "produce help message")(
+            "port,p", po::value<unsigned short>()->default_value(8443), "port to listen on")(
+            "bind,b", po::value<std::string>()->default_value("0.0.0.0"),
+            "address to listen on: IPv4 or IPv6 (IPv6 enables dual-stack)")(
+            "cert,c", po::value<std::string>()->required(), "server certificate path (required)")(
+            "key,k", po::value<std::string>()->required(), "server private key path (required)")(
+            "threads,t", po::value<int>()->default_value(4), "number of worker threads")(
+            "max-connections", po::value<int>()->default_value(1024), "maximum active sessions")(
+            "max-payload", po::value<int>()->default_value(65535),
+            "maximum payload, 0..65535 bytes")("timeout-ms", po::value<int>()->default_value(10000),
+                                               "deadline per network operation, milliseconds")(
+            "shutdown-timeout-ms", po::value<int>()->default_value(5000),
+            "active session drain deadline, milliseconds")(
+            "log-file,l", po::value<std::string>()->default_value("server.log"),
+            "path to log file")("log-append",
+                                "append to the log file instead of truncating it on start")(
+            "log-level", po::value<std::string>()->default_value("info"),
+            "log level (trace, debug, info, warn, error, critical)");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -59,8 +62,8 @@ int main(int argc, char* argv[]) {
         const int max_payload = vm["max-payload"].as<int>();
         const int timeout_ms = vm["timeout-ms"].as<int>();
         const int shutdown_ms = vm["shutdown-timeout-ms"].as<int>();
-        if (max_connections <= 0 || max_payload < 0 || max_payload > 65535 ||
-            timeout_ms <= 0 || shutdown_ms <= 0) {
+        if (max_connections <= 0 || max_payload < 0 || max_payload > 65535 || timeout_ms <= 0 ||
+            shutdown_ms <= 0) {
             std::cerr << "Argument parsing error: --max-connections, --max-payload, "
                          "--timeout-ms or --shutdown-timeout-ms is out of range\n";
             return 1;
@@ -142,13 +145,12 @@ int main(int argc, char* argv[]) {
         logger->info("Starting thread pool with {} threads", thread_count);
 
         for (int i = 0; i < thread_count; ++i) {
-            threads.emplace_back([&io_context]() {
-                io_context.run();
-            });
+            threads.emplace_back([&io_context]() { io_context.run(); });
         }
 
         // --- 6. Ожидание завершения (Ctrl+C) ---
-        logger->info("Server running on port {} with {} threads. Press Ctrl+C to stop.", port, thread_count);
+        logger->info("Server running on port {} with {} threads. Press Ctrl+C to stop.", port,
+                     thread_count);
 
         // Ждем, пока потоки не закончат работу (они будут крутиться в run())
         for (auto& t : threads) {
@@ -161,12 +163,12 @@ int main(int argc, char* argv[]) {
         signal_thread.join();
 
         const auto stats = server.stats();
-        logger->info("Server stopped: accepted={}, rejected={}, accept errors={}, "
-                     "timed out={}, oversized={}, protocol errors={}, "
-                     "packets echoed={}, bytes echoed={}, active={}",
-                     stats.accepted, stats.rejected, stats.accept_errors,
-                     stats.timed_out, stats.oversized, stats.protocol_errors,
-                     stats.packets_echoed, stats.bytes_echoed, stats.active);
+        logger->info(
+            "Server stopped: accepted={}, rejected={}, accept errors={}, "
+            "timed out={}, oversized={}, protocol errors={}, "
+            "packets echoed={}, bytes echoed={}, active={}",
+            stats.accepted, stats.rejected, stats.accept_errors, stats.timed_out, stats.oversized,
+            stats.protocol_errors, stats.packets_echoed, stats.bytes_echoed, stats.active);
 
     } catch (const po::error& e) {
         std::cerr << "Argument parsing error: " << e.what() << "\n";

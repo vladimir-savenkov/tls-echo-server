@@ -78,8 +78,8 @@ public:
         : connection_(connection), state_callback_(std::move(state_callback)),
           completion_callback_(std::move(completion_callback)), options_(options) {
         if ((options_.payload_size && *options_.payload_size > 65535) ||
-            options_.duration.count() < 0 ||
-            options_.window == 0 || options_.window > max_client_window) {
+            options_.duration.count() < 0 || options_.window == 0 ||
+            options_.window > max_client_window) {
             throw std::invalid_argument("Invalid client run options");
         }
         // Pipelining действует только в режиме длительности: счётный режим
@@ -165,43 +165,44 @@ private:
         inflight_started_.push_back(std::chrono::steady_clock::now());
         inflight_payloads_.push_back(std::move(payload));
         write_outstanding_ = true;
-        auto bytes = Packet(100U + static_cast<uint32_t>(packet_number),
-                            inflight_payloads_.back()).serialize();
+        auto bytes = Packet(100U + static_cast<uint32_t>(packet_number), inflight_payloads_.back())
+                         .serialize();
         if (state_callback_) {
-            log_state("sending packet=" + std::to_string(packet_number + 1) +
-                      "/" + std::to_string(packets_to_send_) +
-                      ", id=" + std::to_string(100U + packet_number) +
-                      ", data=\"" + escape_log_payload(inflight_payloads_.back()) + "\"");
+            log_state("sending packet=" + std::to_string(packet_number + 1) + "/" +
+                      std::to_string(packets_to_send_) +
+                      ", id=" + std::to_string(100U + packet_number) + ", data=\"" +
+                      escape_log_payload(inflight_payloads_.back()) + "\"");
         }
 
-        connection_.async_write(std::move(bytes),
-            [this](const boost::system::error_code& error, std::size_t bytes_written) {
-                if (state_callback_) {
-                    log_state("write callback: bytes=" + std::to_string(bytes_written) +
-                              ", status=" + (error ? error.message() : "ok"));
-                }
-                if (error) {
-                    fail(ClientError::write_failed);
-                    return;
-                }
-                ++packets_sent_;
-                write_outstanding_ = false;
-                if (state_callback_) {
-                    log_state("packet sent: total=" + std::to_string(packets_sent_));
-                }
-                // Цепочка чтения одна и стартует с первой завершённой записи;
-                // дальше она живёт, пока есть запросы без ответа.
-                if (!reading_ && !inflight_payloads_.empty()) {
-                    reading_ = true;
-                    read_header();
-                }
-                maybe_send();
-            });
+        connection_.async_write(std::move(bytes), [this](const boost::system::error_code& error,
+                                                         std::size_t bytes_written) {
+            if (state_callback_) {
+                log_state("write callback: bytes=" + std::to_string(bytes_written) +
+                          ", status=" + (error ? error.message() : "ok"));
+            }
+            if (error) {
+                fail(ClientError::write_failed);
+                return;
+            }
+            ++packets_sent_;
+            write_outstanding_ = false;
+            if (state_callback_) {
+                log_state("packet sent: total=" + std::to_string(packets_sent_));
+            }
+            // Цепочка чтения одна и стартует с первой завершённой записи;
+            // дальше она живёт, пока есть запросы без ответа.
+            if (!reading_ && !inflight_payloads_.empty()) {
+                reading_ = true;
+                read_header();
+            }
+            maybe_send();
+        });
     }
 
     void read_header() {
         if (state_callback_) log_state("waiting for response header");
-        connection_.async_read_exactly(sizeof(PacketHeader),
+        connection_.async_read_exactly(
+            sizeof(PacketHeader),
             [this](const boost::system::error_code& error, std::vector<char> header) {
                 if (state_callback_) {
                     log_state("header callback: bytes=" + std::to_string(header.size()) +
@@ -243,7 +244,8 @@ private:
                 }
                 const std::size_t payload_size = wire::from_network16(decoded.len);
                 if (state_callback_) {
-                    log_state("response header parsed: id=" + std::to_string(wire::from_network32(decoded.id)) +
+                    log_state("response header parsed: id=" +
+                              std::to_string(wire::from_network32(decoded.id)) +
                               ", payload_bytes=" + std::to_string(payload_size));
                 }
                 read_payload(std::move(header), payload_size);
@@ -253,13 +255,14 @@ private:
     // Линейная цепочка проверок ответа «заголовок → payload → сверка»;
     // разбиение на помощники усложнит чтение последовательности — сложность
     // осознанно принята.
-    void read_payload(std::vector<char> header, std::size_t payload_size) {  // NOLINT(readability-function-cognitive-complexity)
+    void read_payload(  // NOLINT(readability-function-cognitive-complexity)
+        std::vector<char> header, std::size_t payload_size) {
         if (state_callback_) {
             log_state("waiting for response payload: bytes=" + std::to_string(payload_size));
         }
-        connection_.async_read_exactly(payload_size,
-            [this, header = std::move(header), payload_size](
-                const boost::system::error_code& error, std::vector<char> payload) {
+        connection_.async_read_exactly(
+            payload_size, [this, header = std::move(header), payload_size](
+                              const boost::system::error_code& error, std::vector<char> payload) {
                 if (state_callback_) {
                     log_state("payload callback: bytes=" + std::to_string(payload.size()) +
                               ", status=" + (error ? error.message() : "ok"));
@@ -275,20 +278,18 @@ private:
 
                 try {
                     Packet packet = Packet::deserialize(
-                        header.data(), header.size(),
-                        std::string(payload.begin(), payload.end()));
+                        header.data(), header.size(), std::string(payload.begin(), payload.end()));
                     if (state_callback_) {
-                        log_state("received packet=" + std::to_string(packets_received_ + 1) +
-                                  "/" + std::to_string(packets_to_send_) +
-                                  ", id=" + std::to_string(packet.id()) +
-                                  ", data=\"" + escape_log_payload(packet.payload()) + "\"");
+                        log_state("received packet=" + std::to_string(packets_received_ + 1) + "/" +
+                                  std::to_string(packets_to_send_) +
+                                  ", id=" + std::to_string(packet.id()) + ", data=\"" +
+                                  escape_log_payload(packet.payload()) + "\"");
                     }
                     if (!packet.verify_crc()) {
                         fail(ClientError::invalid_crc);
                         return;
                     }
-                    const uint32_t expected_id =
-                        100U + static_cast<uint32_t>(packets_received_);
+                    const uint32_t expected_id = 100U + static_cast<uint32_t>(packets_received_);
                     if (packet.id() != expected_id) {
                         fail(ClientError::unexpected_packet_id);
                         return;
@@ -318,9 +319,10 @@ private:
                 // Завершение: счётный режим — получены все ответы; режим
                 // длительности — срок истёк и окно in-flight пустое
                 // (отправленные запросы доработаны до полных ответов).
-                const bool done = options_.duration.count() > 0
-                    ? (now - run_started_ >= options_.duration && inflight_payloads_.empty())
-                    : packets_received_ == packets_to_send_;
+                const bool done =
+                    options_.duration.count() > 0
+                        ? (now - run_started_ >= options_.duration && inflight_payloads_.empty())
+                        : packets_received_ == packets_to_send_;
                 if (done) {
                     active_ = false;
                     complete_ = true;
@@ -330,9 +332,10 @@ private:
                     return;
                 }
                 if (inflight_payloads_.empty()) {
-                    reading_ = false;  // новых ответов нет — цепочка возобновится после следующей записи
+                    reading_ =
+                        false;  // новых ответов нет — цепочка возобновится после следующей записи
                 } else {
-                    read_header();    // ответы ещё в полёте — читаем дальше
+                    read_header();  // ответы ещё в полёте — читаем дальше
                 }
                 maybe_send();
             });

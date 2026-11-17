@@ -37,22 +37,19 @@ uint32_t calculate_crc32(const char* data, std::size_t size) {
 
     uint32_t crc = 0xFFFFFFFFU;
     for (std::size_t i = 0; i < size; ++i) {
-        crc = (crc >> 8U) ^
-              crc32_table[(crc ^ static_cast<unsigned char>(data[i])) & 0xFFU];
+        crc = (crc >> 8U) ^ crc32_table[(crc ^ static_cast<unsigned char>(data[i])) & 0xFFU];
     }
     return crc ^ 0xFFFFFFFFU;
 }
 
-Packet::Packet(uint32_t id, const std::string& payload)
-    : id_(id), payload_(payload) {
+Packet::Packet(uint32_t id, const std::string& payload) : id_(id), payload_(payload) {
     if (payload.size() > std::numeric_limits<uint16_t>::max()) {
         throw std::length_error("Packet payload exceeds 65535 bytes");
     }
     update_crc();
 }
 
-Packet::Packet(uint32_t id, uint16_t len, uint32_t crc,
-               const std::string& payload, uint8_t flags)
+Packet::Packet(uint32_t id, uint16_t len, uint32_t crc, const std::string& payload, uint8_t flags)
     : id_(id), crc_(crc), flags_(flags), payload_(payload) {
     if (len != payload.size()) {
         throw std::invalid_argument("Packet header length does not match payload size");
@@ -64,9 +61,7 @@ Packet::Packet(uint32_t id, uint16_t len, uint32_t crc,
     }
 }
 
-void Packet::update_crc() {
-    crc_ = calculate_crc32(payload_.data(), payload_.size());
-}
+void Packet::update_crc() { crc_ = calculate_crc32(payload_.data(), payload_.size()); }
 
 std::vector<char> Packet::serialize() const {
     PacketHeader header{};
@@ -121,11 +116,8 @@ Packet Packet::make_error(uint32_t error_code) {
 
 std::string packet_error_name(uint32_t error_code) {
     switch (error_code) {
-        case packet_error_oversize:
-            return "oversize payload";
-        case packet_error_protocol:
-            return "protocol error";
-        default:
-            return "unknown error (code " + std::to_string(error_code) + ")";
+        case packet_error_oversize: return "oversize payload";
+        case packet_error_protocol: return "protocol error";
+        default: return "unknown error (code " + std::to_string(error_code) + ")";
     }
 }

@@ -37,12 +37,10 @@ void test_escapes_binary_bytes_as_hex() {
 
 void test_payload_stays_on_single_log_line() {
     const std::string escaped = escape_log_payload("junk\n\"quoted\"\r\n\x01\t\\");
-    check(escaped.find('\n') == std::string::npos,
-          "escaped payload contains no raw newline");
+    check(escaped.find('\n') == std::string::npos, "escaped payload contains no raw newline");
     check(escaped.find('\r') == std::string::npos,
           "escaped payload contains no raw carriage return");
-    check(escaped == R"(junk\n\"quoted\"\r\n\x01\t\\)",
-          "mixed payload is fully escaped");
+    check(escaped == R"(junk\n\"quoted\"\r\n\x01\t\\)", "mixed payload is fully escaped");
 }
 }  // namespace
 
