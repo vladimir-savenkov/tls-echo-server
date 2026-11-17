@@ -202,6 +202,61 @@ void test_pipelined_duration_window() {
     check(stats.bytes_echoed == client.bytes_received(), "server counts pipelined payload bytes");
 }
 
+// Session resumption: primer проходит полный handshake и отдаёт сессию,
+// второе соединение обязано пройти сокращённый handshake (SSL_session_reused),
+// контрольное свежее соединение без сессии — снова полный.
+void test_tls_session_resumption() {
+    const PemBundle pem = make_self_signed_pem();
+    auto logger = make_quiet_debug_logger();
+
+    boost::asio::io_context io;
+    boost::asio::ssl::context server_ctx = make_server_context(pem);
+    enable_tls_session_cache(server_ctx);
+    boost::asio::ssl::context client_ctx = make_client_context();
+
+    TlsServer server(io, server_ctx, 0, logger);  // порт 0 — эфемерный
+
+    // TLS 1.3 присылает ticket после handshake, и стек обрабатывает его при
+    // чтении — сессию захватываем только после завершения обмена пакетами.
+    TlsClient primer(io, client_ctx, "127.0.0.1", server.port(), logger, 1);
+    primer.start(2);
+    const bool primer_done = wait_for(
+        io, [&primer] { return primer.succeeded() || primer.failure_reason() != "none"; },
+        std::chrono::seconds(10));
+    check(primer_done && primer.succeeded(), "primer client completes the exchange");
+    check(!primer.session_reused(), "primer connection uses a full handshake");
+
+    const auto session = primer.session();
+    check(session != nullptr, "primer session is captured");
+    check(session && SSL_SESSION_is_resumable(session.get()) != 0, "captured session is resumable");
+
+    // Отдельный контекст, как у боевого клиента: SSL_SESSION шарится между
+    // соединениями с разными trust store.
+    boost::asio::ssl::context resumed_ctx = make_client_context();
+    TlsClientOptions options;
+    options.resume_session = session;
+    TlsClient resumed(io, resumed_ctx, "127.0.0.1", server.port(), logger, 2, options);
+    resumed.start(2);
+    const bool resumed_done = wait_for(
+        io, [&resumed] { return resumed.succeeded() || resumed.failure_reason() != "none"; },
+        std::chrono::seconds(10));
+    check(resumed_done && resumed.succeeded(), "resumed client completes the exchange");
+    check(resumed.session_reused(), "second connection resumes the captured session");
+
+    // Контроль: без сессии handshake обязан быть полным, иначе проверка выше
+    // не доказывает resumption.
+    boost::asio::ssl::context fresh_ctx = make_client_context();
+    TlsClient fresh(io, fresh_ctx, "127.0.0.1", server.port(), logger, 3);
+    fresh.start(1);
+    const bool fresh_done = wait_for(
+        io, [&fresh] { return fresh.succeeded() || fresh.failure_reason() != "none"; },
+        std::chrono::seconds(10));
+    check(fresh_done && fresh.succeeded(), "fresh client completes the exchange");
+    check(!fresh.session_reused(), "fresh connection uses a full handshake");
+
+    stop_and_drain(io, server);
+}
+
 void test_server_rejects_corrupted_payload() {
     const PemBundle pem = make_self_signed_pem();
     auto logger = make_quiet_debug_logger();
@@ -830,6 +885,7 @@ void test_accept_error_backoff() {
 int main() {  // NOLINT(bugprone-exception-escape)
     test_tls_echo_round_trip();
     test_pipelined_duration_window();
+    test_tls_session_resumption();
     test_server_rejects_corrupted_payload();
     test_server_rejects_protocol_header_mismatch();
     test_client_reports_connect_failure();

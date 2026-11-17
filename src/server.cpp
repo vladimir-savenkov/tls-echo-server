@@ -1,10 +1,12 @@
 #include "server.h"
 #include "log_payload.h"
+#include <openssl/ssl.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace {
@@ -23,6 +25,19 @@ std::chrono::milliseconds accept_retry_delay(std::size_t consecutive_errors) {
 constexpr std::size_t drain_chunk_size = 4096;
 
 }  // namespace
+
+void enable_tls_session_cache(boost::asio::ssl::context& ssl_context) {
+    SSL_CTX* context = ssl_context.native_handle();
+    // Session id context обязателен: без него OpenSSL не кеширует серверные
+    // сессии и resumption по session id (TLS 1.2) не работает. OpenSSL
+    // копирует строку в контекст (лимит — 32 байта).
+    const std::string session_id_context = "tls-echo-server";
+    SSL_CTX_set_session_id_context(
+        context, reinterpret_cast<const unsigned char*>(session_id_context.data()),
+        static_cast<unsigned int>(session_id_context.size()));
+    SSL_CTX_set_session_cache_mode(context, SSL_SESS_CACHE_SERVER);
+    SSL_CTX_set_timeout(context, 300);
+}
 
 TlsServer::TlsServer(boost::asio::io_context& io_context, boost::asio::ssl::context& ssl_context,
                      unsigned short port, std::shared_ptr<spdlog::logger> logger,

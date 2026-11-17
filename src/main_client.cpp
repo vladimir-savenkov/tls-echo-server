@@ -32,6 +32,8 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
             "cert,c", po::value<std::string>(),
             "trusted CA certificate (default: system trust store)")(
             "insecure", "disable TLS certificate verification for local tests")(
+            "resume",
+            "reuse the TLS session of the first connection for the rest (session resumption)")(
             "timeout-ms", po::value<int>()->default_value(10000),
             "deadline per network operation, milliseconds")("payload-size", po::value<int>(),
                                                             "binary payload size, 0..65535 bytes")(
@@ -146,26 +148,49 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
         // Храним клиентов до завершения всех операций, включая отменённые.
         std::vector<std::unique_ptr<TlsClient>> clients;
         clients.reserve(static_cast<std::size_t>(client_count));
+        // Общий цикл событий и пул потоков для текущей волны клиентов.
+        auto run_pool = [&io_context, thread_count] {
+            std::vector<std::thread> workers;
+            workers.reserve(static_cast<std::size_t>(thread_count - 1));
+            for (int index = 1; index < thread_count; ++index) {
+                workers.emplace_back([&io_context]() { io_context.run(); });
+            }
+            io_context.run();
+            for (auto& worker : workers) {
+                worker.join();
+            }
+        };
         const auto started_at = std::chrono::steady_clock::now();
-        for (int index = 0; index < client_count; ++index) {
+        // Primer-соединение: при --resume первое соединение проходит полный
+        // handshake, а его сессию получают остальные клиенты. TLS 1.3 шлёт
+        // ticket после handshake, поэтому захват — после завершения обмена.
+        clients.push_back(std::make_unique<TlsClient>(io_context, *ssl_contexts[0], host, port,
+                                                      logger, 1, client_options));
+        clients.back()->start(packet_count);
+        run_pool();
+        if (vm.count("resume") > 0 && client_count > 1) {
+            auto shared_session = clients.front()->session();
+            if (shared_session && SSL_SESSION_is_resumable(shared_session.get()) != 0) {
+                client_options.resume_session = std::move(shared_session);
+                logger->info("TLS session captured; remaining {} client(s) will resume it",
+                             client_count - 1);
+            } else {
+                logger->warn("TLS session is not resumable; remaining clients use full handshakes");
+            }
+        }
+        for (int index = 1; index < client_count; ++index) {
             clients.push_back(std::make_unique<TlsClient>(
                 io_context, *ssl_contexts[static_cast<std::size_t>(index)], host, port, logger,
                 index + 1, client_options));
             clients.back()->start(packet_count);
         }
-
-        // Все соединения используют общий цикл событий и пул потоков.
-        std::vector<std::thread> workers;
-        workers.reserve(static_cast<std::size_t>(thread_count - 1));
-        for (int index = 1; index < thread_count; ++index) {
-            workers.emplace_back([&io_context]() { io_context.run(); });
-        }
-        io_context.run();
-        for (auto& worker : workers) {
-            worker.join();
+        if (client_count > 1) {
+            io_context.restart();
+            run_pool();
         }
 
         int completed_clients = 0;
+        int resumed_clients = 0;
         std::uint64_t packets_received = 0;
         std::uint64_t bytes_received = 0;
         LatencyStats request_latency;
@@ -177,12 +202,15 @@ int main(int argc, char* argv[]) {  // NOLINT(readability-function-cognitive-com
             request_latency.merge(client->latency());
             if (client->setup_microseconds() > 0)
                 setup_latency.record(client->setup_microseconds());
+            if (client->session_reused()) ++resumed_clients;
             if (client->succeeded()) {
                 ++completed_clients;
             } else {
                 logger->error("Client {} failed: {}", index + 1, client->failure_reason());
             }
         }
+        if (vm.count("resume") > 0)
+            logger->info("TLS sessions resumed: {}/{}", resumed_clients, client_count);
 
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started_at);

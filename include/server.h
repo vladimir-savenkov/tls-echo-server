@@ -36,6 +36,12 @@ struct ServerStats {
     uint64_t active = 0;
 };
 
+// Включает серверный кеш TLS-сессий (session resumption): session id context
+// обязателен — без него OpenSSL не кеширует сессии; таймаут кеша 300 с.
+// Для TLS 1.3 ticket-ключ OpenSSL эфемерный: resumption живёт в пределах
+// процесса сервера, перезапуск инвалидирует выданные ticket'ы.
+void enable_tls_session_cache(boost::asio::ssl::context& ssl_context);
+
 // Владелец хранит сервер до обработки всех операций, включая отменённые.
 class TlsServer {
 public:

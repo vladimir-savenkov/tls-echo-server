@@ -106,6 +106,11 @@ private:
 struct TlsClientOptions {
     std::chrono::milliseconds timeout{10000};
     ClientRunOptions run;
+    // Сессия для TLS session resumption: захватывается у завершившего
+    // клиента через session() и передаётся следующим соединениям.
+    // SSL_SESSION иммутабельна и считает ссылки — шаринг между
+    // соединениями с разными ssl::context и из разных потоков безопасен.
+    std::shared_ptr<SSL_SESSION> resume_session;
 };
 
 // Владелец хранит TlsClient до обработки всех отменённых операций.
@@ -118,7 +123,7 @@ public:
     explicit TlsClient(boost::asio::io_context& io_context, boost::asio::ssl::context& ssl_context,
                        std::string host, unsigned short port,
                        std::shared_ptr<spdlog::logger> logger, int client_number,
-                       TlsClientOptions options = {}, CompletionHandler on_complete = {});
+                       const TlsClientOptions& options = {}, CompletionHandler on_complete = {});
 
     void start(int packet_count);
     bool finished() const { return finished_; }
@@ -129,6 +134,16 @@ public:
     const LatencyStats& latency() const { return client_.latency(); }
     double setup_microseconds() const { return setup_microseconds_; }
     std::string failure_reason() const;
+    // Захваченная TLS-сессия для resumption. TLS 1.3 присылает ticket после
+    // handshake (обрабатывается стеком при чтении), поэтому вызывать после
+    // завершения обмена — к этому моменту ticket гарантированно принят.
+    // Передаётся следующим соединениям через TlsClientOptions::resume_session.
+    std::shared_ptr<SSL_SESSION> session() {
+        return {SSL_get1_session(socket_.native_handle()), &SSL_SESSION_free};
+    }
+    // Осмысленно после handshake: true, если сервер принял сессию и
+    // handshake прошёл сокращённо (без проверки сертификата).
+    bool session_reused() { return SSL_session_reused(socket_.native_handle()) == 1; }
 
 private:
     void arm(const char* stage);

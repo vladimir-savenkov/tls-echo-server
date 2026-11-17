@@ -100,6 +100,9 @@ int main(int argc, char* argv[]) {
         // соединения; пол ниже 1.2 недопустим (RFC 8996).
         boost::asio::ssl::context ssl_context(boost::asio::ssl::context::tls_server);
         SSL_CTX_set_min_proto_version(ssl_context.native_handle(), TLS1_2_VERSION);
+        // Кеш сессий: resumption ускоряет handshake при массовых
+        // переподключениях клиентов (основной сценарий нагрузки).
+        enable_tls_session_cache(ssl_context);
 
         ssl_context.use_certificate_file(cert_path, boost::asio::ssl::context::file_format::pem);
         ssl_context.use_private_key_file(key_path, boost::asio::ssl::context::file_format::pem);

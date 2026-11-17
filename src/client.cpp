@@ -15,7 +15,8 @@ std::function<void(const std::string&)> make_state_logger(
 
 TlsClient::TlsClient(boost::asio::io_context& io_context, boost::asio::ssl::context& ssl_context,
                      std::string host, unsigned short port, std::shared_ptr<spdlog::logger> logger,
-                     int client_number, TlsClientOptions options, CompletionHandler on_complete)
+                     int client_number, const TlsClientOptions& options,
+                     CompletionHandler on_complete)
     : strand_(boost::asio::make_strand(io_context)), resolver_(io_context),
       socket_(io_context, ssl_context), deadline_(strand_),
       connection_(socket_, strand_, logger, client_number, options.timeout,
@@ -38,6 +39,12 @@ TlsClient::TlsClient(boost::asio::io_context& io_context, boost::asio::ssl::cont
       client_number_(client_number), options_(options), on_complete_(std::move(on_complete)) {
     if (options_.timeout.count() <= 0) throw std::invalid_argument("Timeout must be positive");
     socket_.set_verify_callback(boost::asio::ssl::host_name_verification(host_));
+    // Resumption: сессия ставится до handshake; если сервер её не примет
+    // (истекла, рестарт), OpenSSL сам откатится на полный handshake.
+    if (options_.resume_session &&
+        SSL_set_session(socket_.native_handle(), options_.resume_session.get()) != 1) {
+        throw std::runtime_error("Cannot set TLS session for resumption");
+    }
     boost::system::error_code error;
     boost::asio::ip::make_address(host_, error);
     if (error && SSL_set_tlsext_host_name(socket_.native_handle(), host_.c_str()) != 1) {
